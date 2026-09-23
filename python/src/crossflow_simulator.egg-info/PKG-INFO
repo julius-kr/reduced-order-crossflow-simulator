@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: crossflow-simulator
+Version: 0.1.0
+Summary: Early-stage simulator for labelled microfluidic cross-sections
+Requires-Python: >=3.10
+Requires-Dist: numpy
+Requires-Dist: matplotlib
