@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crossflow-simulator"
+version = "0.1.0"
+description = "Reduced-order simulator for material cross-sections in low-Reynolds-number microfluidic flow sculpting"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+dependencies = [
+    "numpy>=2.0,<3",
+    "scipy>=1.11,<2",
+    "matplotlib>=3.8,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+# Only the new implementation under src/ is packaged. The frozen snapshot in
+# legacy/python/ is executed by an isolated worker and never joins this namespace.
+where = ["src"]
+include = ["crossflow_simulator*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
