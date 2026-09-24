@@ -1,0 +1,16 @@
+[project]
+name = "crossflow-simulator"
+version = "0.1.0"
+description = "Early-stage simulator for labelled microfluidic cross-sections"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "matplotlib",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
