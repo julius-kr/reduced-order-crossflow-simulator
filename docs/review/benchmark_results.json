@@ -1,0 +1,135 @@
+{
+  "environment": {
+    "python": "3.13.12 (tags/v3.13.12:1cbe481, Feb  3 2026, 18:22:25) [MSC v.1944 64 bit (AMD64)]",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "platform": "Windows-11-10.0.22631-SP0",
+    "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+    "logical_cpus": 16
+  },
+  "pressure": [
+    {
+      "nx": 41,
+      "ny": 31,
+      "legacy": {
+        "seconds": [
+          1.4976460998877883,
+          1.486312000080943,
+          1.5098410998471081
+        ],
+        "median_seconds": 1.4976460998877883
+      },
+      "sparse_including_assembly": {
+        "seconds": [
+          0.0026432001031935215,
+          0.00250140018761158,
+          0.0021735001355409622
+        ],
+        "median_seconds": 0.00250140018761158
+      },
+      "speedup": 598.7231100825137,
+      "max_pressure_difference": 7.565323350000597e-07,
+      "legacy_relative_residual": 2.1219920554539883e-08,
+      "sparse_relative_residual": 1.874279356927883e-15,
+      "legacy_messages": [
+        "Pressure solver converged in 763 iterations.",
+        "Pressure solver converged in 763 iterations.",
+        "Pressure solver converged in 763 iterations."
+      ]
+    },
+    {
+      "nx": 81,
+      "ny": 61,
+      "legacy": {
+        "seconds": [
+          21.486346200108528,
+          21.38080669986084,
+          21.721004699822515
+        ],
+        "median_seconds": 21.486346200108528
+      },
+      "sparse_including_assembly": {
+        "seconds": [
+          0.008685099892318249,
+          0.008863700088113546,
+          0.008445100393146276
+        ],
+        "median_seconds": 0.008685099892318249
+      },
+      "speedup": 2473.9319600817325,
+      "max_pressure_difference": 2.9246154917839107e-06,
+      "legacy_relative_residual": 2.8626303525419605e-08,
+      "sparse_relative_residual": 2.9109769635248356e-15,
+      "legacy_messages": [
+        "Pressure solver converged in 2663 iterations.",
+        "Pressure solver converged in 2663 iterations.",
+        "Pressure solver converged in 2663 iterations."
+      ]
+    }
+  ],
+  "velocity": [
+    {
+      "ny": 160,
+      "nz": 100,
+      "n_terms": 100,
+      "legacy": {
+        "seconds": [
+          0.9561168001964688,
+          0.9490314000286162,
+          0.9310066001489758
+        ],
+        "median_seconds": 0.9490314000286162
+      },
+      "separable": {
+        "seconds": [
+          0.0007758000865578651,
+          0.0009651998989284039,
+          0.0008425000123679638
+        ],
+        "median_seconds": 0.0008425000123679638
+      },
+      "speedup": 1126.4467490762772,
+      "max_velocity_difference": 2.842170943040401e-14
+    },
+    {
+      "ny": 300,
+      "nz": 300,
+      "n_terms": 100,
+      "legacy": {
+        "seconds": [
+          10.090510900132358
+        ],
+        "median_seconds": 10.090510900132358
+      },
+      "separable": {
+        "seconds": [
+          0.0018315999768674374
+        ],
+        "median_seconds": 0.0018315999768674374
+      },
+      "speedup": 5509.123732022553,
+      "max_velocity_difference": 2.842170943040401e-14
+    }
+  ],
+  "correctness_probes": {
+    "changed_label_fraction_by_step_count": {
+      "20": 0.0218505859375,
+      "120": 0.0,
+      "240": 0.0
+    },
+    "strength_0_01_and_0_5_identical_with_normalization": true,
+    "array_flow_rate_change_1_to_9_identical": true,
+    "array_requested_labels": [
+      10,
+      20,
+      30,
+      40
+    ],
+    "array_actual_labels": [
+      10,
+      11,
+      12,
+      13
+    ]
+  }
+}
