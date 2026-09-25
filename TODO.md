@@ -12,8 +12,8 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 
 ## M1: pressure, profiles, caching
 - [x] Single-series duct profile instead of the legacy double loop
-- [ ] Sparse lubrication pressure on physical spacings
-- [ ] Hydraulic network for pressure-driven operation
+- [x] Sparse lubrication pressure on physical spacings
+- [x] Hydraulic network for pressure-driven operation
 - [x] Bounded caches with explicit keys
 - [ ] Performance report
 
