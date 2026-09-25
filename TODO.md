@@ -11,10 +11,10 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [ ] Remove `python/` once nothing references it
 
 ## M1: pressure, profiles, caching
-- [ ] Single-series duct profile instead of the legacy double loop
+- [x] Single-series duct profile instead of the legacy double loop
 - [ ] Sparse lubrication pressure on physical spacings
 - [ ] Hydraulic network for pressure-driven operation
-- [ ] Bounded caches with explicit keys
+- [x] Bounded caches with explicit keys
 - [ ] Performance report
 
 ## M2: transport and maps
