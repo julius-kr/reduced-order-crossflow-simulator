@@ -13,6 +13,7 @@ dependencies = [
     "numpy>=2.0,<3",
     "scipy>=1.11,<2",
     "matplotlib>=3.8,<4",
+    "pyamg>=5.0,<6",  # AMG block preconditioner for the Stokes solver (block-LU fallback without it)
 ]
 
 [project.optional-dependencies]

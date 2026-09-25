@@ -2,4 +2,5 @@
 numpy>=2.0
 scipy>=1.11
 matplotlib>=3.8
+pyamg>=5.0
 pytest>=8
