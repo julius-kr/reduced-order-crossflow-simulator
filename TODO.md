@@ -5,7 +5,7 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 ## M0: layout, legacy isolation, baseline
 - [x] Freeze `python/` as `legacy/python/` with a hash manifest
 - [x] Scaffold `src/`: typed project config, units, geometry
-- [ ] Legacy adapter and isolated worker (never import the snapshot in-process)
+- [x] Legacy adapter and isolated worker (never import the snapshot in-process)
 - [x] Representative example projects (work package A)
 - [ ] Record the legacy behaviour baseline
 - [ ] Remove `python/` once nothing references it

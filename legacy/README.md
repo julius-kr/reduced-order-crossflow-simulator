@@ -6,3 +6,8 @@
 and egg-info).
 
 **Do not edit anything here.** Known defects are preserved on purpose, and fixes belong in `src/`.
+The code runs only in an isolated worker process (`src/crossflow_simulator/backends/legacy_worker.py`),
+which refuses to start if any archived source file differs from the manifest.
+
+* Verify: `crossflow verify-snapshot`
+* Original tests: `crossflow legacy-tests`

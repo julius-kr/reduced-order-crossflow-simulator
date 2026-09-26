@@ -35,3 +35,6 @@ include = ["crossflow_simulator*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
+markers = [
+    "legacy: runs the frozen legacy solver in an isolated worker",
+]

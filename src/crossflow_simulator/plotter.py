@@ -102,3 +102,23 @@ def draw_top_view(ax, config: dict, length_unit: str = "um") -> None:
     ax.set_aspect("equal")
     ax.set_xlabel(f"x [{length_unit}]")
     ax.set_ylabel(f"y [{length_unit}]")
+
+
+def comparison_figure(legacy: SimulationResult | None, new: SimulationResult | None, colors_legacy: dict[int, str],
+                      colors_new: dict[int, str], length_unit: str = "um", timings: dict | None = None):
+    """Side-by-side final sections: legacy on the left, new on the right, same physical axes."""
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), sharex=True, sharey=True)
+    for ax, result, colors, name in ((axes[0], legacy, colors_legacy, "Legacy solver"),
+                                     (axes[1], new, colors_new, "New solver")):
+        if result is None or not result.ok or result.final is None:
+            status = "not run" if result is None else f"{result.status}: {result.message[:80]}"
+            ax.text(0.5, 0.5, f"{name}\n{status}", ha="center", va="center", transform=ax.transAxes, wrap=True)
+            ax.set_axis_off()
+            continue
+        extra = ""
+        if timings and name in timings:
+            extra = f"\n{timings[name]}"
+        draw_section(ax, result.final, colors, length_unit, stream_labels(result), f"{name}{extra}",
+                     legend=name == "New solver")
+    fig.tight_layout()
+    return fig

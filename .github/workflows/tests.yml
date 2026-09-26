@@ -1,0 +1,26 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install --no-deps -e .
+      - name: Legacy snapshot and migration
+        run: python -m crossflow_simulator verify-snapshot
+        continue-on-error: true  # fails until the original python/ tree is removed (M0)
+      - name: Original tests against the frozen snapshot
+        run: python -m crossflow_simulator legacy-tests
+      - name: Test suite
+        run: python -m pytest -q
