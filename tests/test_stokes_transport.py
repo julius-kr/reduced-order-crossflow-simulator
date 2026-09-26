@@ -1,8 +1,9 @@
-"""3D Stokes solver and streamline integration."""
+"""3D Stokes solver, streamline integration, and map composition/remap."""
 import numpy as np
 import pytest
 
 from crossflow_simulator import physics
+from crossflow_simulator.maps import KIND_PATTERN, ConservativeRemap, GroupMap, compose
 from crossflow_simulator.solvers.section import flux_matched_velocity
 from crossflow_simulator.solvers.stokes import RectilinearGrid, StokesProblem, StokesSolution, WallOpening
 from crossflow_simulator.transport import REACHED_PLANE, StaggeredInterpolator, trace
@@ -157,3 +158,40 @@ def test_trajectories_never_leave_the_channel(straight):
     assert np.all(result.status == REACHED_PLANE)
     assert np.all((result.end[:, 1] > 0) & (result.end[:, 1] < 2.0) & (result.end[:, 2] > 0) & (result.end[:, 2] < 1.0))
 
+
+# ----------------------------------------------------------------------------- composition and remap
+
+def affine_map(y, z, shift_y, shift_z):
+    Y, Z = np.meshgrid(y, z)
+    return GroupMap(y, z, np.full(Y.shape, KIND_PATTERN, np.int8), -np.ones(Y.shape, np.int64), Y + shift_y, Z + shift_z)
+
+
+def test_composition_order_a_then_b():
+    y, z = np.linspace(0, 1, 41), np.linspace(0, 1, 41)
+    Y, Z = np.meshgrid(y, z)
+    a = GroupMap(y, z, np.zeros(Y.shape, np.int8), -np.ones(Y.shape, np.int64), Y**2, Z)  # donor_a = y^2
+    b = GroupMap(y, z, np.zeros(Y.shape, np.int8), -np.ones(Y.shape, np.int64), 0.5 * Y, Z)  # donor_b = y/2
+    ab = compose(a, b)  # a upstream, b downstream: donor = donor_a(donor_b(y)) = (y/2)^2
+    assert np.allclose(ab.donor_y, (0.5 * Y) ** 2, atol=2e-4)
+    ba = compose(b, a)  # the other order: donor = y^2 / 2
+    assert np.allclose(ba.donor_y, 0.5 * Y**2, atol=2e-4)
+
+
+def test_conservative_remap_conserves_every_stream_exactly():
+    y_edges = np.linspace(0, 1, 41)
+    z_edges = np.linspace(0, 1, 21)
+    yc, zc = 0.5 * (y_edges[1:] + y_edges[:-1]), 0.5 * (z_edges[1:] + z_edges[:-1])
+    Y, Z = np.meshgrid(yc, zc)
+    donor_y = np.clip(Y + 0.07 * np.sin(np.pi * Z) * np.sin(np.pi * Y), 0, 1)
+    gmap = GroupMap(yc, zc, np.zeros(Y.shape, np.int8), -np.ones(Y.shape, np.int64), donor_y, Z)
+    flux = np.outer(np.sin(np.pi * zc), np.sin(np.pi * yc)) + 0.01
+    fractions = np.zeros((2, len(zc), len(yc)))
+    fractions[0] = Y < 0.37
+    fractions[1] = 1 - fractions[0]
+    remap = ConservativeRemap(gmap, (y_edges, z_edges), flux, flux, [])
+    out, info = remap.apply(fractions, [])
+    before = (fractions * flux).sum(axis=(1, 2))
+    after = (out * (remap.matrix.sum(axis=1).A.ravel().reshape(flux.shape))).sum(axis=(1, 2))
+    assert np.allclose(before, after + np.array(info["lost_flux_by_stream_m3_s"]), rtol=1e-12)
+    assert remap.matrix.min() >= 0
+    assert np.all(out >= -1e-15) and np.allclose(out.sum(axis=0), 1.0)

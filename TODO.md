@@ -20,12 +20,12 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 ## M2: transport and maps
 - [x] 3D Stokes per feature group
 - [x] Continuous streamline tracing (no per-step resampling)
-- [ ] Conservative remap
+- [x] Conservative remap
 
 ## M3/M4: junctions and pillars
-- [ ] Flux-constrained inlet patterns
-- [ ] Serial-inlet junction maps
-- [ ] Asymmetric partial-height pillars, interaction grouping
+- [x] Flux-constrained inlet patterns
+- [x] Serial-inlet junction maps
+- [x] Asymmetric partial-height pillars, interaction grouping
 - [ ] Reference data (CFD/experiment): none in the repo yet, ask for it
 
 ## M5/M6: application
