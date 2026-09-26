@@ -19,7 +19,7 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 
 ## M2: transport and maps
 - [x] 3D Stokes per feature group
-- [ ] Continuous streamline tracing (no per-step resampling)
+- [x] Continuous streamline tracing (no per-step resampling)
 - [ ] Conservative remap
 
 ## M3/M4: junctions and pillars

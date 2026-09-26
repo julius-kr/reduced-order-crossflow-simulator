@@ -1,10 +1,11 @@
-"""3D Stokes solver: developed flow, convergence, resistance, flux balance, and symmetry."""
+"""3D Stokes solver and streamline integration."""
 import numpy as np
 import pytest
 
 from crossflow_simulator import physics
 from crossflow_simulator.solvers.section import flux_matched_velocity
-from crossflow_simulator.solvers.stokes import RectilinearGrid, StokesProblem, WallOpening
+from crossflow_simulator.solvers.stokes import RectilinearGrid, StokesProblem, StokesSolution, WallOpening
+from crossflow_simulator.transport import REACHED_PLANE, StaggeredInterpolator, trace
 
 
 def duct(n: int, length: float = 3.0, W: float = 2.0, H: float = 1.0, solid=None, openings=(), mu=1.0):
@@ -93,4 +94,66 @@ def test_lateral_mirror_symmetry_of_the_flow():
     s = problem.solve(problem.boundary_values(inflow=profile, outflow=profile))
     assert np.max(np.abs(s.u - s.u[:, ::-1, :])) < 1e-6 * s.u.max()
     assert np.max(np.abs(s.v + s.v[:, ::-1, :])) < 1e-6 * s.u.max()
+
+
+# ----------------------------------------------------------------------------- transport
+
+def uniform_solution(u0=1.0, v0=0.0, w0=0.0):
+    grid = RectilinearGrid(np.linspace(0, 2, 21), np.linspace(0, 1, 11), np.linspace(0, 1, 11))
+    solid = np.zeros(grid.shape, bool)
+    return StokesSolution(grid, solid, np.full(grid.face_shape(0), u0), np.full(grid.face_shape(1), v0),
+                          np.full(grid.face_shape(2), w0), np.zeros(grid.shape))
+
+
+def test_subpixel_displacement_accumulates_instead_of_freezing():
+    """Legacy rounding erased sub-pixel motion; continuous coordinates must accumulate it exactly."""
+    solution = uniform_solution(v0=0.001)
+    interp = StaggeredInterpolator(solution)
+    # Stay away from walls and the developed inflow/outflow planes, where the ghost conditions
+    # (v = w = 0) do not match this synthetic uniform field.
+    seeds = np.array([[1.8, 0.5, 0.5], [1.8, 0.45, 0.55]])
+    result = trace(interp, seeds, stop_x=0.2, step=0.05)
+    assert np.all(result.status == REACHED_PLANE)
+    assert np.allclose(result.end[:, 1], seeds[:, 1] - 0.0016, atol=1e-9)
+    assert np.allclose(result.end[:, 2], seeds[:, 2])
+
+
+def test_zero_forcing_is_identity(straight):
+    grid, _, solution = straight
+    interp = StaggeredInterpolator(solution)
+    rng = np.random.default_rng(3)
+    yz = rng.uniform([0.05, 0.05], [1.95, 0.95], size=(300, 2))
+    seeds = np.column_stack([np.full(300, grid.xf[-1]), yz])
+    result = trace(interp, seeds, stop_x=grid.xf[0])
+    assert np.all(result.status == REACHED_PLANE)
+    assert np.max(np.abs(result.end[:, 1:] - yz)) < 1e-9
+
+
+def test_integration_accuracy_converges(straight):
+    """Tighter tolerance -> smaller error against an accurate reference in a curved field."""
+    def solid(g):
+        xc, yc, zc = g.centers
+        return (np.abs(xc - 1.5)[:, None, None] < 0.25) & (yc < 1.2)[None, :, None] & (zc < 0.55)[None, None, :]
+
+    grid, problem = duct(8, solid=solid)
+    profile = developed(grid)
+    interp = StaggeredInterpolator(problem.solve(problem.boundary_values(inflow=profile, outflow=profile)))
+    rng = np.random.default_rng(5)
+    seeds = np.column_stack([np.full(200, grid.xf[-1]), rng.uniform(0.2, 1.8, 200), rng.uniform(0.1, 0.9, 200)])
+    reference = trace(interp, seeds, grid.xf[0], integrator="rk4", step=0.005)
+    errors = []
+    for tolerance in (1e-2, 1e-3, 1e-4):
+        result = trace(interp, seeds, grid.xf[0], error_tolerance=tolerance)
+        ok = (result.status == REACHED_PLANE) & (reference.status == REACHED_PLANE)
+        errors.append(np.mean(np.linalg.norm(result.end[ok, 1:] - reference.end[ok, 1:], axis=1)))
+    assert errors[0] > errors[1] > errors[2]
+
+
+def test_trajectories_never_leave_the_channel(straight):
+    grid, _, solution = straight
+    interp = StaggeredInterpolator(solution)
+    seeds = np.column_stack([np.full(4, grid.xf[-1]), [1e-4, 2.0 - 1e-4, 1.0, 1.0], [0.5, 0.5, 1e-4, 1.0 - 1e-4]])
+    result = trace(interp, seeds, grid.xf[0])
+    assert np.all(result.status == REACHED_PLANE)
+    assert np.all((result.end[:, 1] > 0) & (result.end[:, 1] < 2.0) & (result.end[:, 2] > 0) & (result.end[:, 2] < 1.0))
 
