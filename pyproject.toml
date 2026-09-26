@@ -19,6 +19,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
+[project.scripts]
+crossflow = "crossflow_simulator.cli:main"
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 include-package-data = true

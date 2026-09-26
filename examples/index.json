@@ -1,0 +1,74 @@
+{
+  "examples": [
+    {
+      "file": "empty_channel.json",
+      "name": "Empty rectangular channel",
+      "shared_capability": true,
+      "family": "baseline",
+      "notes": "Single inlet filling a straight channel: the outlet equals the inlet (identity map)."
+    },
+    {
+      "file": "serial_three_inlets.json",
+      "name": "Three serial inlets",
+      "shared_capability": true,
+      "family": "serial_inlets",
+      "notes": "Serial top-wall ports narrower than the channel: curved, nested layers."
+    },
+    {
+      "file": "parallel_unequal.json",
+      "name": "Unequal parallel inlets",
+      "shared_capability": true,
+      "family": "patterns",
+      "notes": "Side-by-side streams with flow ratio 1:2:3."
+    },
+    {
+      "file": "array_2x2_unequal.json",
+      "name": "Unequal 2x2 inlet array",
+      "shared_capability": true,
+      "family": "patterns",
+      "notes": "Non-separable per-inlet flow rates; the legacy array operator ignores them."
+    },
+    {
+      "file": "right_triangle_bottom.json",
+      "name": "Off-center bottom-mounted right triangle",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Asymmetric partial-height pillar (h/H = 0.6) off the channel centreline."
+    },
+    {
+      "file": "right_triangle_reflected.json",
+      "name": "Reflected right triangle",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Mirror image of right_triangle_bottom about the channel centreline (y -> W - y)."
+    },
+    {
+      "file": "right_triangle_top.json",
+      "name": "Top-mounted right triangle",
+      "shared_capability": false,
+      "family": "partial_pillars",
+      "notes": "Top-mounted variant; the legacy lubrication-divergence model has no top mount."
+    },
+    {
+      "file": "two_nearby_pillars.json",
+      "name": "Two nearby pillars",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Pillars 150 um apart interact; they are solved as one coupled group."
+    },
+    {
+      "file": "viscosity_contrast_layers.json",
+      "name": "Viscosity contrast (experimental)",
+      "shared_capability": false,
+      "family": "fluid_properties",
+      "notes": "4:1 viscosity ratio: flux-constrained layers and viscosity-coupled Stokes iteration (experimental)."
+    },
+    {
+      "file": "pressure_driven_serial.json",
+      "name": "Pressure-driven serial inlets",
+      "shared_capability": false,
+      "family": "driving_conditions",
+      "notes": "Inlet pressures behind tubing resistances; flow rates come from the hydraulic network."
+    }
+  ]
+}

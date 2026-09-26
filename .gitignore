@@ -11,5 +11,9 @@ build/
 dist/
 .pytest_cache/
 
+# Local outputs
+results/
+*.npz
+
 # Local scratch space
 temp/
