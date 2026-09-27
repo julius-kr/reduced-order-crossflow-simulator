@@ -1,9 +1,14 @@
 """Planning-only experiments; no production solver code is changed.
 
 Run from the repository root with an environment containing NumPy, SciPy,
-and pytest: python -I docs/review/benchmark_review.py
+and pytest: python -I docs/review/benchmark_review.py [--output PATH]
 The sparse prototype deliberately reproduces the existing discrete equations,
 including their missing physical grid spacing; it is not the proposed final PDE.
+
+Source selection: after the M0 migration this harness measures the frozen
+snapshot in legacy/python/src (originally the top-level python tree at d69ab5f).
+benchmark_results.json is the historical record and is never overwritten;
+reruns write to --output (default: benchmark_results_rerun.json).
 """
 from __future__ import annotations
 
@@ -18,8 +23,8 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "python" / "src"
-sys.path.insert(0, str(SRC))
+LEGACY_SRC = ROOT / "legacy" / "python" / "src"
+sys.path.insert(0, str(LEGACY_SRC))
 
 import numpy as np
 import scipy
@@ -36,8 +41,8 @@ from crossflow_simulator.physics import rectangular_channel_velocity_2d
 from crossflow_simulator.secondary_flow import DivergenceDrivenLocalizedSecondaryFlowOperator
 import crossflow_simulator
 
-if not Path(crossflow_simulator.__file__).resolve().is_relative_to(SRC.resolve()):
-    raise SystemExit(f"Refusing to benchmark: crossflow_simulator loaded from {crossflow_simulator.__file__}, not {SRC}")
+if not Path(crossflow_simulator.__file__).resolve().is_relative_to(LEGACY_SRC.resolve()):
+    raise SystemExit(f"Refusing to benchmark: crossflow_simulator loaded from {crossflow_simulator.__file__}, not {LEGACY_SRC}")
 
 
 def timed(fn, repeats=3):
@@ -88,7 +93,12 @@ def separable_velocity(y, z, width=2.0, height=1.0, n_terms=100):
 
 
 def main():
-    output = Path(__file__).parent / "benchmark_results.json"
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=Path(__file__).parent / "benchmark_results_rerun.json")
+    output = parser.parse_args().output
+    if output.resolve() == (Path(__file__).parent / "benchmark_results.json").resolve():
+        raise SystemExit("benchmark_results.json is the historical record; choose another --output.")
     report = {"environment": {"python": sys.version, "numpy": np.__version__, "scipy": scipy.__version__, "platform": platform.platform(), "processor": platform.processor(), "logical_cpus": os.cpu_count()}, "pressure": [], "velocity": []}
     for nx, ny in ((41, 31), (81, 61)):
         x, y = np.linspace(0, 1, nx), np.linspace(0, 1, ny)

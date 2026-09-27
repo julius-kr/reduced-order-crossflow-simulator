@@ -8,7 +8,7 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [x] Legacy adapter and isolated worker (never import the snapshot in-process)
 - [x] Representative example projects (work package A)
 - [x] Record the legacy behaviour baseline
-- [ ] Remove `python/` once nothing references it
+- [x] Remove `python/` once nothing references it
 
 ## M1: pressure, profiles, caching
 - [x] Single-series duct profile instead of the legacy double loop
@@ -32,3 +32,8 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [ ] GUI with a side-by-side solver comparison
 - [ ] Packaging (PyInstaller) and smoke test
 - [ ] Validation and performance report
+
+## Follow-ups
+- [ ] Pin the environments (app, dev, legacy)
+- [ ] Reuse donor maps when only the inlet pattern changes
+- [ ] Pathlines for a 3D view

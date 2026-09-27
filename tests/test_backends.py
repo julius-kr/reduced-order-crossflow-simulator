@@ -11,7 +11,7 @@ from crossflow_simulator.backends.client import WorkerError
 from crossflow_simulator.backends.legacy import build_plan, legacy_root, run_legacy_tests, verify_snapshot
 from crossflow_simulator.comparison import ComparisonService, export_comparison
 from crossflow_simulator.config import OperatingConditions, PillarSpec, ProjectConfig
-from crossflow_simulator.migration import find_references
+from crossflow_simulator.migration import find_references, migration_status
 
 from conftest import ROOT, UM, make_config
 
@@ -33,6 +33,10 @@ def test_original_tests_pass_against_the_frozen_snapshot():
 
 def test_no_executable_reference_to_the_removed_python_tree():
     assert find_references(ROOT) == []
+
+
+def test_original_python_tree_removed():
+    assert not migration_status(ROOT)["original_python_dir_present"]
 
 
 def test_new_package_never_loads_the_legacy_snapshot():

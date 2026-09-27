@@ -6,8 +6,8 @@ computes a 3D Stokes flow field for each interacting group of features and trans
 along continuous streamlines. Legacy is the frozen original heuristic solver. It is kept unchanged
 and runs next to the new solver in its own isolated worker process.
 
-Status: work in progress on `docs/implementation_plan.md` (M0: legacy isolation and paired
-comparison). The original top-level `python/` tree stays until nothing depends on it.
+Status: work in progress on `docs/implementation_plan.md`. M0 is complete: the original top-level
+`python/` tree was removed after the snapshot in `legacy/python/` had been hash-verified.
 
 ## Development (Windows, Python 3.11+)
 
@@ -38,7 +38,6 @@ supports (the shared-capability comparison presets).
 
 ```text
 legacy/            frozen snapshot of the original python/ tree (manifest.json holds hashes); never edited
-python/            original tree; removed after the migration (M0)
 src/crossflow_simulator/
   config.py        typed project contracts, units, validation      results.py   result contract, NPZ I/O
   physics.py       duct profiles, groups                            geometry.py  polygons, rasterization

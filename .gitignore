@@ -13,6 +13,7 @@ dist/
 
 # Local outputs
 results/
+docs/review/benchmark_results_rerun.json
 
 # Local scratch space
 temp/
