@@ -7,7 +7,7 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [x] Scaffold `src/`: typed project config, units, geometry
 - [x] Legacy adapter and isolated worker (never import the snapshot in-process)
 - [x] Representative example projects (work package A)
-- [ ] Record the legacy behaviour baseline
+- [x] Record the legacy behaviour baseline
 - [ ] Remove `python/` once nothing references it
 
 ## M1: pressure, profiles, caching

@@ -53,14 +53,17 @@ src/crossflow_simulator/
   comparison.py    paired legacy/new runs, metrics, benchmark protocol, export
   cli.py           command line
 tests/             new-solver, comparison, and legacy-isolation tests
+benchmarks/        legacy baseline capture
+reference_data/    the legacy behaviour baseline
 examples/          project files and presets
 tools/             provenance and generator scripts
 docs/              implementation plan and review record
 ```
 
-## Tests
+## Tests and benchmarks
 
 ```powershell
 python -m pytest -q                       # full suite
 python -m pytest -q -m "not legacy"       # without the legacy worker
+python benchmarks/capture_legacy_baseline.py   # re-record legacy behaviour fixtures
 ```

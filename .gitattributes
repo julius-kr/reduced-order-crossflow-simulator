@@ -1,2 +1,3 @@
 # The legacy snapshot is hash-verified; never convert its line endings.
 legacy/** -text
+*.npz binary

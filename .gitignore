@@ -13,7 +13,6 @@ dist/
 
 # Local outputs
 results/
-*.npz
 
 # Local scratch space
 temp/

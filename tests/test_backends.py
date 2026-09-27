@@ -76,6 +76,24 @@ def test_tampered_snapshot_is_refused(tmp_path, monkeypatch):
     client.terminate()
 
 
+def test_legacy_reproduces_the_recorded_baseline(service):
+    baseline = json.loads((ROOT / "reference_data" / "legacy_baseline" / "baseline.json").read_text(encoding="utf-8"))
+    recorded = baseline["recorded_with"]["legacy_identity"]
+    current = service.client("legacy").hello["identity"]
+    if current.get("numpy") != recorded.get("numpy"):
+        pytest.skip(f"environment differs from the recorded baseline (numpy {current.get('numpy')} vs "
+                    f"{recorded.get('numpy')})")
+    backend = get_backend("legacy")
+    for name in ("parallel_unequal", "array_2x2_unequal", "serial_three_inlets", "right_triangle_bottom"):
+        cfg = ProjectConfig.load(ROOT / "examples" / f"{name}.json")
+        run = service.run_backend("legacy", cfg, "baseline", timeout=600)
+        assert run.status == "success", run.message
+        labels = np.load(service.workdir / "baseline_legacy.npz")["labels"]
+        digest = hashlib.sha256(np.ascontiguousarray(labels).tobytes()).hexdigest()
+        assert digest == baseline["cases"][name]["labels_sha256"], name
+        assert backend.check(cfg) == []
+
+
 def test_legacy_pillar_moves_labels_and_reports_frozen_settings(service):
     # The legacy operator's own default (120 steps) moves labels by less than half a cell per
     # step and freezes; the adapter's automatic step count must let the pillar act.

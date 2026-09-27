@@ -1,0 +1,187 @@
+{
+  "schema": "crossflow-legacy-baseline/1",
+  "note": "Legacy behaviour, not truth. Timings are single runs on the recording machine.",
+  "recorded_with": {
+    "legacy_identity": {
+      "name": "legacy",
+      "version": "0.1.0+d69ab5f",
+      "source_revision": "d69ab5fbcc71103fc770d4ad8818476fc7cf35e2",
+      "package_path": "C:\\Users\\Julius\\VisualStudioProjects\\reduced-order-crossflow-simulator\\legacy\\python\\src\\crossflow_simulator",
+      "python": "3.13.12",
+      "executable": "C:\\Users\\Julius\\VisualStudioProjects\\reduced-order-crossflow-simulator\\.venv\\Scripts\\python.exe",
+      "numpy": "2.5.3"
+    },
+    "platform": "Windows-11-10.0.22631-SP0",
+    "processor": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel"
+  },
+  "cases": {
+    "empty_channel": {
+      "labels_sha256": "2ee19d0966dbb4962a17cb19c7d4509f7e6aa30a1efe9d58e88a11f9ed98dcf4",
+      "labels_shape": [
+        80,
+        160
+      ],
+      "labels_dtype": "int64",
+      "unique_labels": [
+        1
+      ],
+      "plan_hash": "d62d1f6b4ebe091217c41b20e7568ebaa446c137f640b5766768627f90cd57bd",
+      "input_hash": "0e07aeb9f4e5f4db35c47b6a664ca04b9567a75103956c7ec111d5bc5df94ed9",
+      "solve_seconds": 0.016850199999680626,
+      "end_to_end_seconds": 0.018714100000124745,
+      "stage_seconds": {
+        "00_cross_section": 0.0002654999998412677,
+        "01_fill": 2.010000025620684e-05
+      },
+      "legacy_messages": []
+    },
+    "serial_three_inlets": {
+      "labels_sha256": "d3c47d9734f8d193f6c759d67e9134aafaa9fc4d262515dde0f685436cc2ab63",
+      "labels_shape": [
+        80,
+        160
+      ],
+      "labels_dtype": "int64",
+      "unique_labels": [
+        1,
+        2,
+        3
+      ],
+      "plan_hash": "75b9ab5a3bc828465bec2c4b1725926bb3febc235a58899321d26b81bb9a7a78",
+      "input_hash": "f3371ad96f29333e6cabbf152078e4daa9879989e39cc0341219151cd67634d7",
+      "solve_seconds": 0.9202308999997513,
+      "end_to_end_seconds": 0.9210570000000189,
+      "stage_seconds": {
+        "00_cross_section": 8.990000014819088e-05,
+        "01_velocity_profiles": 0.9134377999998833,
+        "02_stack_auto": 0.0004347000003690482,
+        "03_diameter_curvature": 0.0017533000000184984
+      },
+      "legacy_messages": []
+    },
+    "parallel_unequal": {
+      "labels_sha256": "9ab59f28538044fa5d4499218aeb65b5fd382a94a8965095d87811eda24ef753",
+      "labels_shape": [
+        80,
+        160
+      ],
+      "labels_dtype": "int64",
+      "unique_labels": [
+        1,
+        2,
+        3
+      ],
+      "plan_hash": "010798afe041fe721542b9b4b532aff37b8f6362d826fc3303b82213260a0dc8",
+      "input_hash": "94d809c4086bf2c623b1d000545e78154e68d0fdc0047e6453360dad30110f97",
+      "solve_seconds": 0.9093566999999894,
+      "end_to_end_seconds": 0.9102224999996906,
+      "stage_seconds": {
+        "00_cross_section": 0.00037440000005517504,
+        "01_velocity_profiles": 0.9015660000000025,
+        "02_stack_auto": 0.0005544000000554661
+      },
+      "legacy_messages": []
+    },
+    "array_2x2_unequal": {
+      "labels_sha256": "8c05b9a2c8e6b060cc15dafcc4427d2654ca9ac7811c2e67291e711681baf4a0",
+      "labels_shape": [
+        80,
+        160
+      ],
+      "labels_dtype": "int64",
+      "unique_labels": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "plan_hash": "c502e904ecd4ca3e516e8d25571e1c1f387d93dfe383e35e9413a6325159e355",
+      "input_hash": "d1d8de7fc8ca877e8de302bc6afc0d6956380be7dd977b349a44fa585c0a8e59",
+      "solve_seconds": 0.8483407000003353,
+      "end_to_end_seconds": 0.8490372000001116,
+      "stage_seconds": {
+        "00_cross_section": 0.00012699999979304266,
+        "01_velocity_profiles": 0.8447564999996757,
+        "02_stack_auto": 0.0002696999999898253
+      },
+      "legacy_messages": []
+    },
+    "right_triangle_bottom": {
+      "labels_sha256": "ce0fb834f0dfb9ffadb9d5cba505d9648cd223e54280f8b913424964c895c51f",
+      "labels_shape": [
+        80,
+        160
+      ],
+      "labels_dtype": "int64",
+      "unique_labels": [
+        1,
+        2
+      ],
+      "plan_hash": "c7e01b93a37d6b89f2c2648aa31b15de964b18a962be62560bbd960d0241e48f",
+      "input_hash": "5f2054676f261aae065932ef40caf4dcb882345d4d28dac05e7b7a47b18412e0",
+      "solve_seconds": 2.810763799999677,
+      "end_to_end_seconds": 2.811736099999962,
+      "stage_seconds": {
+        "00_cross_section": 0.00010420000035082921,
+        "01_velocity_profiles": 0.8251637000003029,
+        "02_stack_poiseuille": 0.000320200000260229,
+        "03_pillar_lubrication_divergence": 1.9794742999997652
+      },
+      "legacy_messages": [
+        "Pressure solver converged in 874 iterations."
+      ]
+    },
+    "right_triangle_reflected": {
+      "labels_sha256": "83aa50c329c4115a6a014769ef82a614a7680c9eed8177dfdcdeee4dfc6d55f0",
+      "labels_shape": [
+        80,
+        160
+      ],
+      "labels_dtype": "int64",
+      "unique_labels": [
+        1,
+        2
+      ],
+      "plan_hash": "d8aa5a7230e60a9ef30036c555ffe1d20222434ae966a341c3086652b02601b3",
+      "input_hash": "485b7700ec8c0b4ba09fdef57146171c47d706231ecd85b36187afb4a8a48323",
+      "solve_seconds": 3.149103599999762,
+      "end_to_end_seconds": 3.1511123999998745,
+      "stage_seconds": {
+        "00_cross_section": 0.00018640000007508206,
+        "01_velocity_profiles": 0.9147023000000445,
+        "02_stack_poiseuille": 0.0005962000000181433,
+        "03_pillar_lubrication_divergence": 2.22311929999978
+      },
+      "legacy_messages": [
+        "Pressure solver converged in 894 iterations."
+      ]
+    },
+    "two_nearby_pillars": {
+      "labels_sha256": "6aafd7ad1fbe964f152ac098c17f9a2d5bf160f85fbe3a46bf3e20762cd7d6fc",
+      "labels_shape": [
+        80,
+        160
+      ],
+      "labels_dtype": "int64",
+      "unique_labels": [
+        1,
+        2
+      ],
+      "plan_hash": "9d5836b0f1a3a55c3f8dcaaba000996667b79340b10bf172c0fe2e01efce32b0",
+      "input_hash": "987f19383847ff4dd5ee370a2e1836d8d944f99e225a519a3c8f25bfe05476e0",
+      "solve_seconds": 7.0581178999996155,
+      "end_to_end_seconds": 7.05946159999985,
+      "stage_seconds": {
+        "00_cross_section": 9.469999986322364e-05,
+        "01_velocity_profiles": 1.425396499999806,
+        "02_stack_poiseuille": 0.00031309999985751347,
+        "03_pillar_lubrication_divergence": 2.6865068000001884,
+        "04_pillar_lubrication_divergence": 2.937246999999843
+      },
+      "legacy_messages": [
+        "Pressure solver converged in 874 iterations.",
+        "Pressure solver converged in 858 iterations."
+      ]
+    }
+  }
+}
