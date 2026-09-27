@@ -36,5 +36,6 @@ include = ["crossflow_simulator*"]
 testpaths = ["tests"]
 addopts = "-p no:cacheprovider"
 markers = [
+    "slow: long-running numerical or packaging checks",
     "legacy: runs the frozen legacy solver in an isolated worker",
 ]

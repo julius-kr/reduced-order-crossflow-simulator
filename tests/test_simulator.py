@@ -91,6 +91,7 @@ def test_example_projects_run(examples_dir, name):
     assert float(np.mean(result.final.codes < 0)) < 0.005
 
 
+@pytest.mark.slow
 def test_viscosity_contrast_example_runs_coupled(examples_dir):
     cfg = ProjectConfig.load(examples_dir / "viscosity_contrast_layers.json")
     cfg.grid.output_ny = 96
