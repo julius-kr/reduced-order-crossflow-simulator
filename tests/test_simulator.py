@@ -124,3 +124,26 @@ def test_conservative_transport_conserves_flux_exactly():
     fractions = result.final.diagnostics["flux_fraction_error"]
     assert max(abs(v) for v in fractions.values()) < 1e-3 + info["lost_flux_fraction"]
     assert result.final.fractions is not None
+
+
+def test_map_reuse_matches_a_fresh_calculation():
+    """Pattern-only and flow-scale changes reuse donor maps; the result must equal a fresh solve."""
+    from crossflow_simulator.cache import memory_cache
+
+    base = make_config(pillars=[PillarSpec("tri", TRIANGLE, height=90 * UM, x=300 * UM, y=40 * UM)])
+    first = simulate(base)
+    changed = base.copy()
+    changed.inlets[0].flow_rate *= 0.5
+    changed.inlets[1].flow_rate *= 1.5
+    for m in changed.materials:
+        m.viscosity *= 3.0
+    reused = simulate(changed)
+    assert reused.diagnostics["map_reused"]
+    memory_cache().clear()
+    fresh = simulate(changed)
+    assert not fresh.diagnostics["map_reused"]
+    assert np.array_equal(reused.final.codes, fresh.final.codes)
+    assert reused.diagnostics["groups"][0]["pressure_drop_Pa"] == pytest.approx(
+        fresh.diagnostics["groups"][0]["pressure_drop_Pa"], rel=1e-9)
+    assert first.diagnostics["groups"][0]["pressure_drop_Pa"] == pytest.approx(
+        fresh.diagnostics["groups"][0]["pressure_drop_Pa"] / 3.0, rel=1e-9)

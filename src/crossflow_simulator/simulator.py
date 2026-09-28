@@ -18,11 +18,13 @@ from typing import Callable
 import numpy as np
 
 from . import physics, solver_identity
-from .cache import memory_cache
+from .cache import Stopwatch, memory_cache
 from .config import ProjectConfig, validate_config
 from .inlets import partition_pattern, pattern_grid
+from .geometry import stable_hash
 from .maps import (
-    ChainLink, ConservativeRemap, FlowChain, adaptive_section, group_map, pattern_fractions, subcell_fractions,
+    KIND_PATTERN, ChainLink, ConservativeRemap, FlowChain, SectionMap, adaptive_section, group_map,
+    pattern_fractions, subcell_fractions,
 )
 from .materials import stream_table
 from .models.domain import build_domain, plan_groups
@@ -32,9 +34,9 @@ from .results import Section, SimulationResult, failed_result
 from .solvers.network import solve_network
 from .solvers.section import flux_matched_velocity
 from .solvers.stokes import SolveCancelled
-from .timing import Stopwatch
 
 ProgressFn = Callable[[str, float, str], None]
+MAP_CACHE_VERSION = "section-maps/1"
 
 
 def output_grid(cfg: ProjectConfig) -> tuple[np.ndarray, np.ndarray]:
@@ -127,16 +129,35 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
             warnings.append("Viscosity contrast ignored (coupling off): equal-property map with flux-weighted "
                             f"viscosity {reference_mu:.4g} Pa s.")
 
+        # ---- reuse of transport maps: an equal-property flow field (and therefore every donor map) is
+        # unchanged when only the inlet pattern changes (materials, colours, pattern flow ratios at the same
+        # total flow). Then the analytic pattern is re-evaluated at the stored donor coordinates.
         y_edges, z_edges = output_grid(cfg)
+        group_rates, running = [], pattern_rate
+        for domain in domains:
+            port_rates = [rates[pid] for pid in domain.port_ids]
+            group_rates.append([running, port_rates])
+            running += sum(port_rates)
+        reuse_key = None
+        total_rate = sum(rates.values())
+        if not coupling and cfg.model.transport == "categorical" and domains:
+            # Creeping-flow maps depend on flow *fractions* only: common viscosity and overall flow scale
+            # change pressures and speeds, not streamline geometry.
+            fractions_key = [[up / total_rate, [q / total_rate for q in ports]] for up, ports in group_rates]
+            reuse_key = ("section-maps", stable_hash({
+                "version": MAP_CACHE_VERSION, "domains": [d.key() for d in domains], "rates": fractions_key,
+                "grid": [len(y_edges), len(z_edges), W, H],
+                "tracing": [cfg.model.step_fraction, cfg.model.integrator, cfg.model.tracing_tolerance],
+                "stride": cfg.grid.map_stride, "ports": [[codes[p] for p in d.port_ids] for d in domains],
+            }))
+        cached_maps = memory_cache().get(reuse_key) if reuse_key else None
 
         # ---- group flows
-        # TODO: equal-property donor maps depend on flow fractions only; reuse them when only the inlet
-        # pattern (materials, colours, flow ratios) changes instead of solving and tracing again.
         links: list[ChainLink] = []
-        flow_info = []
+        flow_info = [] if cached_maps is None else _rescaled_flow_info(cached_maps, reference_mu, total_rate)
         upstream_rate = pattern_rate
         coupling_converged = True
-        for g, domain in enumerate(domains):
+        for g, domain in enumerate(domains if cached_maps is None else []):
             checkpoint()
             fraction = 0.2 + 0.45 * g / max(len(domains), 1)
             report("flow", fraction, f"Solving Stokes flow for {domain.group.label}")
@@ -203,15 +224,21 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
                 diagnostics={"expected_flux_m3_s": dict(expected)},
             ))
             flux_rate = pattern_rate
+            stored_maps = []
             for g, domain in enumerate(domains):
                 checkpoint()
                 report("transport", 0.7 + 0.2 * g / max(len(domains), 1), f"Section after {domain.group.label}")
                 for pid in domain.port_ids:
                     expected[codes[pid]] = rates[pid]
                 flux_rate += sum(rates[pid] for pid in domain.port_ids)
-                smap = adaptive_section(chain, g, yc, zc, stride=cfg.grid.map_stride)
-                chain.section_maps[g] = (smap, yc, zc)
-                x_end = links[g].x_end
+                if cached_maps is None:
+                    smap = adaptive_section(chain, g, yc, zc, stride=cfg.grid.map_stride)
+                    chain.section_maps[g] = (smap, yc, zc)
+                    stored_maps.append(smap)
+                    x_end = links[g].x_end
+                else:
+                    smap = _reapply_map(cached_maps["maps"][g], partition.evaluate)
+                    x_end = domain.group.x_end
                 fractions = subcell_fractions(smap.code, smap.kind, smap.donor_y, smap.donor_z, y_edges, z_edges,
                                               partition.evaluate, n_streams, samples)
                 sections.append(Section(
@@ -230,6 +257,10 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
                     fractions=sections[0].fractions.copy(),
                     diagnostics={"expected_flux_m3_s": dict(expected), "note": "identity map: no features"},
                 ))
+
+        if cached_maps is None and reuse_key is not None:
+            memory_cache().put(reuse_key, {"flow_info": flow_info, "maps": stored_maps,
+                                           "viscosity": reference_mu, "total_rate": total_rate})
 
         conservative_info = None
         if cfg.model.transport == "conservative" and links:
@@ -302,6 +333,7 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
                 "conservative_transport": conservative_info,
                 "traced_points": chain.traced_points,
                 "map_lookups": chain.looked_up_points,
+                "map_reused": cached_maps is not None,
                 "cache": memory_cache().stats(),
             },
             timings=timings,
@@ -322,6 +354,35 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
             "failed", f"{type(exc).__name__}: {exc}", timings=watch.timings,
             diagnostics={"traceback": traceback.format_exc()}, **base,
         )
+
+
+def _rescaled_flow_info(cached: dict, viscosity: float, total_rate: float) -> list[dict]:
+    """Flow diagnostics of a reused map, rescaled to the current viscosity and total flow rate."""
+    q = total_rate / cached["total_rate"]
+    mu_q = q * viscosity / cached["viscosity"]
+    out = []
+    for info in cached["flow_info"]:
+        info = dict(info)
+        for key in ("pressure_drop_Pa",):
+            if info.get(key) is not None:
+                info[key] = info[key] * mu_q
+        for key in ("flux_in_m3_s", "flux_out_m3_s", "upstream_rate_m3_s"):
+            if info.get(key) is not None:
+                info[key] = info[key] * q
+        if info.get("port_rates_m3_s") is not None:
+            info["port_rates_m3_s"] = [r * q for r in info["port_rates_m3_s"]]
+        info["cache"] = "map reused (flow geometry unchanged)"
+        out.append(info)
+    return out
+
+
+def _reapply_map(smap, pattern) -> "SectionMap":
+    """Stored donor map with the (possibly changed) inlet pattern re-evaluated at its donor coordinates."""
+    code = smap.code.copy()
+    mask = smap.kind == KIND_PATTERN
+    code[mask] = pattern(smap.donor_y[mask], smap.donor_z[mask])
+    diagnostics = dict(smap.diagnostics, reused_map=True)
+    return SectionMap(code, smap.kind, smap.status, smap.donor_y, smap.donor_z, smap.residence, diagnostics)
 
 
 def _flux_fractions(section: Section, stream_codes: list[int]) -> dict[int, float]:
