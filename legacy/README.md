@@ -11,3 +11,4 @@ which refuses to start if any archived source file differs from the manifest.
 
 * Verify: `crossflow verify-snapshot`
 * Original tests: `crossflow legacy-tests`
+* Dedicated environment: `requirements/legacy.txt`, then set `CROSSFLOW_LEGACY_PYTHON` to its interpreter

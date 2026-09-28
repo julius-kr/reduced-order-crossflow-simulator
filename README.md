@@ -9,13 +9,18 @@ and runs next to the new solver in its own isolated worker process.
 Status: work in progress on `docs/implementation_plan.md`. M0 is complete: the original top-level
 `python/` tree was removed after the snapshot in `legacy/python/` had been hash-verified.
 
-## Development (Windows, Python 3.11+)
+## Install (Windows, Python 3.11+)
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements/dev.txt   # pinned; app.txt for runtime only
 .\.venv\Scripts\python.exe -m pip install --no-deps -e .
 ```
+
+`pyamg` (AMG preconditioner) is an accelerator. The code falls back to block LU without it.
+
+The legacy solver can run in an environment of its own: install `requirements/legacy.txt` there and
+set `CROSSFLOW_LEGACY_PYTHON` to its interpreter.
 
 ## Use
 

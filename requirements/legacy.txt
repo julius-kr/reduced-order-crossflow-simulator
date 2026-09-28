@@ -1,0 +1,7 @@
+# Independently reproducible environment for the frozen legacy solver (legacy/python).
+# The legacy worker imports only the standard library and NumPy; np.trapezoid requires NumPy >= 2.0.
+# matplotlib is only needed by the archived plotter module, pytest by the original tests.
+# Use it with: set CROSSFLOW_LEGACY_PYTHON=<path to this environment's python.exe>
+numpy==2.5.3
+matplotlib==3.11.2
+pytest==9.1.1
