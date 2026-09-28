@@ -25,6 +25,7 @@ crossflow run examples/right_triangle_bottom.json --backend legacy
 crossflow compare examples/parallel_unequal.json --export report/      # paired legacy/new run
 crossflow bench examples/parallel_unequal.json --trials 3              # repeatable benchmark protocol
 crossflow sweep examples/serial_three_inlets.json --set inlets.1.flow_rate_m3_s --values 1e-11,3e-11 --csv sweep.csv
+crossflow validate-references reference_data/analytical
 crossflow verify-snapshot                        # legacy hashes and migration state
 crossflow legacy-tests                           # the six original tests against the frozen snapshot
 ```
@@ -50,10 +51,11 @@ src/crossflow_simulator/
   simulator.py     simulate(config, progress, cancel) — the application service
   backends/        isolated new and legacy workers, protocol, legacy adapter
   comparison.py    paired legacy/new runs, metrics, benchmark protocol, export
+  calibration.py   reference-data contract, holdout, envelopes
   cli.py           command line
 tests/             new-solver, comparison, and legacy-isolation tests
 benchmarks/        legacy baseline capture
-reference_data/    the legacy behaviour baseline
+reference_data/    analytical fixtures and the legacy behaviour baseline
 examples/          project files and presets
 tools/             provenance and generator scripts
 docs/              implementation plan and review record

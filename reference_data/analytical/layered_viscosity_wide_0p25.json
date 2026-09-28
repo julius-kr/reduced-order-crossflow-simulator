@@ -1,0 +1,164 @@
+{
+  "schema": "crossflow-reference/1",
+  "source": {
+    "kind": "analytical",
+    "tool": "closed-form two-layer plane Poiseuille flow",
+    "citation": "textbook layered channel flow",
+    "license": "n/a",
+    "reuse_permitted": true
+  },
+  "config": {
+    "channel": {
+      "width_m": 0.0012,
+      "height_m": 9.999999999999999e-05,
+      "length_m": null
+    },
+    "materials": [
+      {
+        "id": "A",
+        "viscosity_Pa_s": 0.0025,
+        "density_kg_m3": 1000.0,
+        "diffusivity_m2_s": null,
+        "temperature_K": 293.15,
+        "model": "newtonian",
+        "name": "",
+        "color": null
+      },
+      {
+        "id": "B",
+        "viscosity_Pa_s": 0.01,
+        "density_kg_m3": 1000.0,
+        "diffusivity_m2_s": null,
+        "temperature_K": 293.15,
+        "model": "newtonian",
+        "name": "",
+        "color": null
+      }
+    ],
+    "inlets": [
+      {
+        "id": "in1",
+        "material": "A",
+        "placement": "pattern",
+        "flow_rate_m3_s": 1e-11,
+        "pressure_Pa": null,
+        "tubing_resistance_Pa_s_m3": null,
+        "pattern_row": 0,
+        "pattern_col": 0,
+        "station_m": 0.0,
+        "wall": "top",
+        "position_m": 0.0,
+        "diameter_m": null,
+        "shape": "circle",
+        "orientation": "normal",
+        "enabled": true
+      },
+      {
+        "id": "in2",
+        "material": "B",
+        "placement": "pattern",
+        "flow_rate_m3_s": 2.3333333333333334e-11,
+        "pressure_Pa": null,
+        "tubing_resistance_Pa_s_m3": null,
+        "pattern_row": 1,
+        "pattern_col": 0,
+        "station_m": 0.0,
+        "wall": "top",
+        "position_m": 0.0,
+        "diameter_m": null,
+        "shape": "circle",
+        "orientation": "normal",
+        "enabled": true
+      }
+    ],
+    "pattern": {
+      "layout": "layers_z",
+      "rows": 1,
+      "cols": 1,
+      "partition": "auto"
+    },
+    "pillars": [],
+    "operating": {
+      "drive": "flow_rate",
+      "outlet_pressure_Pa": 0.0,
+      "diffusion": false
+    },
+    "grid": {
+      "output_ny": 240,
+      "output_nz": 80,
+      "flow_cells_y": 0,
+      "flow_cells_z": 0,
+      "map_stride": 4,
+      "lubrication_cells_x": 160,
+      "lubrication_cells_y": 64,
+      "dtype": "float64"
+    },
+    "model": {
+      "fidelity": "preview",
+      "junction_model": "stokes_map",
+      "pillar_model": "stokes_map",
+      "viscosity_coupling": "auto",
+      "transport": "categorical",
+      "integrator": "rk2",
+      "step_fraction": 0.5,
+      "tracing_tolerance": 0.001,
+      "interaction_distance_m": null,
+      "upstream_margin": 0.75,
+      "downstream_margin": 1.0,
+      "linear_solver": "auto",
+      "tolerance": 1e-12,
+      "max_coupling_iterations": 8,
+      "convergence_check": false
+    },
+    "legacy": {
+      "velocity_profile": "rectangular_2d",
+      "n_terms": 100,
+      "serial_curvature": true,
+      "curvature_strength": 0.18,
+      "curvature_exponent": 1.0,
+      "curvature_gamma": 1.0,
+      "pillar_model": "lubrication_divergence",
+      "lubrication_nx": 41,
+      "lubrication_ny": 31,
+      "secondary_strength": 0.08,
+      "secondary_steps": 120,
+      "secondary_pseudo_time": 0.12,
+      "secondary_radius_y": 0.3,
+      "secondary_radius_z": 0.3,
+      "center_z_factor": 0.55,
+      "grid_ny": 0,
+      "grid_nz": 0
+    },
+    "display": {
+      "length_unit": "um",
+      "flow_unit": "uL/min",
+      "viscosity_unit": "mPa s",
+      "pressure_unit": "mbar",
+      "color_by": "material"
+    },
+    "name": "two layers, viscosity ratio 0.25",
+    "notes": "",
+    "schema": "crossflow-project/1"
+  },
+  "plane": {
+    "x_m": 0.0,
+    "description": "inlet pattern (developed flow)"
+  },
+  "quantity": "interface",
+  "lower_codes": [
+    1
+  ],
+  "orientation": {
+    "x": "streamwise",
+    "y": "lateral from the left wall looking downstream",
+    "z": "from the bottom"
+  },
+  "family": "layered_viscosity_ratio_0.25",
+  "split": "holdout",
+  "numerics": {
+    "note": "exact in the wide-channel limit; side walls excluded (central half of W)"
+  },
+  "uncertainty": {
+    "interface_m": 5e-07
+  }
+}

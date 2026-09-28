@@ -24,3 +24,5 @@ jobs:
         run: python -m crossflow_simulator legacy-tests
       - name: Test suite
         run: python -m pytest -q
+      - name: Analytical references
+        run: python -m crossflow_simulator validate-references reference_data/analytical

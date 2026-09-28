@@ -5,6 +5,7 @@
     crossflow bench CONFIG [--trials N]
     crossflow validate CONFIG
     crossflow sweep CONFIG --set PATH --values V1,V2,... [--csv out.csv]
+    crossflow validate-references DIR [--out report.json]
     crossflow legacy-tests
     crossflow verify-snapshot
 """
@@ -170,6 +171,17 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_references(args: argparse.Namespace) -> int:
+    from .calibration import validation_report
+
+    report = validation_report(args.directory, holdout_fraction=args.holdout)
+    if args.out:
+        Path(args.out).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    _print({"summary": report["summary"], "envelope": report["envelope"],
+            "cases": {k: v["passed"] for k, v in report["cases"].items()}})
+    return 0 if all(v["passed"] for v in report["cases"].values()) else 1
+
+
 def cmd_legacy_tests(args: argparse.Namespace) -> int:
     from .backends.legacy import run_legacy_tests
 
@@ -219,6 +231,11 @@ def build_parser() -> argparse.ArgumentParser:
     sweep.add_argument("--values", required=True, help="comma-separated JSON values")
     sweep.add_argument("--csv")
     sweep.set_defaults(func=cmd_sweep)
+    refs = sub.add_parser("validate-references", help="evaluate the new solver against a reference directory")
+    refs.add_argument("directory")
+    refs.add_argument("--holdout", type=float, default=0.3)
+    refs.add_argument("--out")
+    refs.set_defaults(func=cmd_references)
     sub.add_parser("legacy-tests", help="run the original tests against the frozen snapshot").set_defaults(
         func=cmd_legacy_tests)
     sub.add_parser("verify-snapshot", help="check snapshot hashes and migration state").set_defaults(
