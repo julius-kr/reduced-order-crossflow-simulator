@@ -15,7 +15,7 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [x] Sparse lubrication pressure on physical spacings
 - [x] Hydraulic network for pressure-driven operation
 - [x] Bounded caches with explicit keys
-- [ ] Performance report
+- [x] Performance report
 
 ## M2: transport and maps
 - [x] 3D Stokes per feature group
@@ -37,3 +37,5 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [x] Pin the environments (app, dev, legacy)
 - [x] Reuse donor maps when only the inlet pattern changes
 - [x] Pathlines for a 3D view
+- [ ] CFD reference to measure accuracy against (no external data available)
+- [ ] Legacy CFD (3D-hydrodynamic-flow-sculpting map library) as a fourth comparison

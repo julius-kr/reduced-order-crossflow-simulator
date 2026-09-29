@@ -17,7 +17,8 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --no-deps -e .
 ```
 
-`pyamg` (AMG preconditioner) is an accelerator. The code falls back to block LU without it.
+`pyamg` (AMG preconditioner) and `numba` (compiled streamline kernel) are accelerators. The code
+falls back to block LU and to the NumPy tracer without them.
 
 The legacy solver can run in an environment of its own: install `requirements/legacy.txt` there and
 set `CROSSFLOW_LEGACY_PYTHON` to its interpreter.

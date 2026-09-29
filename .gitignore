@@ -17,6 +17,8 @@ results/
 benchmarks/results/*.json
 !benchmarks/results/.gitkeep
 docs/review/benchmark_results_rerun.json
+*.nbi
+*.nbc
 
 # Local scratch space
 temp/

@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+fast = ["numba>=0.60"]  # optional compiled streamline kernel (NumPy reference path without it)
 dev = ["pytest>=8"]
 
 [project.scripts]

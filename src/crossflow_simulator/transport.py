@@ -217,6 +217,7 @@ def trace(
     max_length: float | None = None,
     cancel: Callable[[], bool] | None = None,
     error_tolerance: float = 1e-3,
+    use_kernel: bool = True,
 ) -> TraceResult:
     """Integrate streamlines from ``seeds`` until they reach ``x = stop_x`` or an opening.
 
@@ -240,6 +241,13 @@ def trace(
     # stagnation corners exhaust it and are reported as MAX_LENGTH instead of stalling the batch.
     max_steps = (4 * (int(np.ceil(2.0 * extent / ds)) + 1) if adaptive
                  else int(np.ceil(max_length / ds)) + 1)
+    if adaptive and use_kernel and n:
+        from . import transport_kernel
+
+        inputs = transport_kernel.kernel_inputs(velocity)
+        if inputs is not None:
+            return _trace_compiled(velocity, inputs, seeds, stop_x, direction, openings, ds, ds_min, ds_max,
+                                   tolerance, max_length, max_steps, cancel)
     step_size = np.full(n, ds)
     (x0, x1), (y0, y1), (z0, z1) = velocity.bounds
 
@@ -394,6 +402,37 @@ def trace(
     counts = {name: int(np.sum(status == code)) for code, name in STATUS_NAMES.items()}
     counts["wall_limited"] = int(wall_limited.sum())
     return TraceResult(pos, status, origin, residence, length, wall_limited, step_count, counts)
+
+
+def _trace_compiled(velocity, inputs, seeds, stop_x, direction, openings, ds, ds_min, ds_max, tolerance,
+                    max_length, max_steps, cancel, chunk: int = 4096) -> TraceResult:
+    """Same algorithm as the NumPy loop above, in the optional compiled kernel (chunked for cancellation)."""
+    from . import transport_kernel
+
+    grid = velocity.grid
+    (x0, x1), (y0, y1), (z0, z1) = velocity.bounds
+    wall_ids = {"left": 0, "right": 1, "bottom": 2, "top": 3}
+    table = np.array([[wall_ids[o.wall], o.center[0], o.center[1], o.radius] for o in openings], dtype=float)
+    table = table.reshape(-1, 4)
+    widths_min = np.array([float(w.min()) for w in grid.widths])
+    lo = np.array([-np.inf, y0 + 1e-3 * widths_min[1], z0 + 1e-3 * widths_min[2]])
+    hi = np.array([np.inf, y1 - 1e-3 * widths_min[1], z1 - 1e-3 * widths_min[2]])
+    params = np.array([stop_x, float(direction), ds, ds_min, ds_max, tolerance, max_length,
+                       1e-9 * velocity.reference_speed, 0.05 * widths_min[0], float(max_steps)])
+    parts = []
+    for start in range(0, len(seeds), chunk):
+        if cancel is not None and cancel():
+            from .solvers.stokes import SolveCancelled
+
+            raise SolveCancelled()
+        parts.append(transport_kernel.trace_kernel(
+            np.ascontiguousarray(seeds[start:start + chunk]), *inputs["data"], *inputs["flags"], inputs["faces"],
+            inputs["centers"], inputs["uniform"], inputs["origin"], inputs["inverse"], inputs["solid"],
+            inputs["any_solid"], table, velocity.bounds, lo, hi, widths_min, params))
+    end, status, origin, residence, length, limited = (np.concatenate(p) for p in zip(*parts))
+    counts = {name: int(np.sum(status == code)) for code, name in STATUS_NAMES.items()}
+    counts["wall_limited"] = int(limited.sum())
+    return TraceResult(end, status, origin, residence, length, limited, 0, counts)
 
 
 def is_valid(status: np.ndarray) -> np.ndarray:
