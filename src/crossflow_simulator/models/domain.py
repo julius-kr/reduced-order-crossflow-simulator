@@ -72,6 +72,17 @@ def _feature_extent(cfg: ProjectConfig) -> list[tuple[float, float, str, object]
     return sorted(features, key=lambda f: (f[0], f[1]))
 
 
+def channel_extent(cfg: ProjectConfig) -> float:
+    """Streamwise extent shown in the views and traced by pathlines.
+
+    The channel length when it is given; otherwise the last feature plus two channel sizes.
+    """
+    if cfg.channel.length:
+        return float(cfg.channel.length)
+    ends = [0.0] + [end for _, end, _, _ in _feature_extent(cfg)]
+    return max(ends) + 2.0 * max(cfg.channel.width, cfg.channel.height)
+
+
 def plan_groups(cfg: ProjectConfig) -> list[FlowGroup]:
     L = max(cfg.channel.width, cfg.channel.height)
     up = cfg.model.upstream_margin * L

@@ -36,4 +36,4 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 ## Follow-ups
 - [x] Pin the environments (app, dev, legacy)
 - [x] Reuse donor maps when only the inlet pattern changes
-- [ ] Pathlines for a 3D view
+- [x] Pathlines for a 3D view

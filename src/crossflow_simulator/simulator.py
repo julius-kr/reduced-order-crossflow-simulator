@@ -27,16 +27,17 @@ from .maps import (
     pattern_fractions, subcell_fractions,
 )
 from .materials import stream_table
-from .models.domain import build_domain, plan_groups
+from .models.domain import build_domain, channel_extent, plan_groups
 from .models.stokes_map import coupled_viscosity_flow, equal_property_flow
 from .models.validity import assess
+from .pathlines import compute_pathlines, recolor
 from .results import Section, SimulationResult, failed_result
 from .solvers.network import solve_network
 from .solvers.section import flux_matched_velocity
 from .solvers.stokes import SolveCancelled
 
 ProgressFn = Callable[[str, float, str], None]
-MAP_CACHE_VERSION = "section-maps/1"
+MAP_CACHE_VERSION = "section-maps/2"  # 2: pathlines stored with the maps
 
 
 def output_grid(cfg: ProjectConfig) -> tuple[np.ndarray, np.ndarray]:
@@ -140,6 +141,7 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
             running += sum(port_rates)
         reuse_key = None
         total_rate = sum(rates.values())
+        outlet_x = max([channel_extent(cfg)] + [d.group.x_end for d in domains])
         if not coupling and cfg.model.transport == "categorical" and domains:
             # Creeping-flow maps depend on flow *fractions* only: common viscosity and overall flow scale
             # change pressures and speeds, not streamline geometry.
@@ -149,6 +151,7 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
                 "grid": [len(y_edges), len(z_edges), W, H],
                 "tracing": [cfg.model.step_fraction, cfg.model.integrator, cfg.model.tracing_tolerance],
                 "stride": cfg.grid.map_stride, "ports": [[codes[p] for p in d.port_ids] for d in domains],
+                "outlet_x": outlet_x,
             }))
         cached_maps = memory_cache().get(reuse_key) if reuse_key else None
 
@@ -258,8 +261,27 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
                     diagnostics={"expected_flux_m3_s": dict(expected), "note": "identity map: no features"},
                 ))
 
+        report("pathlines", 0.9, "Tracing pathlines for the 3D view")
+        with watch.time("pathlines"):
+            pathlines = None
+            try:
+                if cached_maps is None:
+                    port_number = {inlet.id: k + 1 for k, inlet in enumerate(cfg.port_inlets())}
+                    pathlines = compute_pathlines(
+                        links, domains, partition.evaluate, W, H, pattern_rate, group_rates,
+                        [[codes[pid] for pid in d.port_ids] for d in domains],
+                        [[port_number[pid] for pid in d.port_ids] for d in domains], outlet_x,
+                        step_fraction=cfg.model.step_fraction, integrator=cfg.model.integrator,
+                        tolerance=cfg.model.tracing_tolerance, cancel=cancel)
+                elif cached_maps.get("pathlines") is not None:
+                    pathlines = recolor(cached_maps["pathlines"], partition.evaluate,
+                                        time_scale=cached_maps["total_rate"] / total_rate)
+            except SolveCancelled:
+                raise
+            except Exception as exc:  # noqa: BLE001 - display data only; never fails the calculation
+                warnings.append(f"3D pathlines unavailable: {type(exc).__name__}: {exc}")
         if cached_maps is None and reuse_key is not None:
-            memory_cache().put(reuse_key, {"flow_info": flow_info, "maps": stored_maps,
+            memory_cache().put(reuse_key, {"flow_info": flow_info, "maps": stored_maps, "pathlines": pathlines,
                                            "viscosity": reference_mu, "total_rate": total_rate})
 
         conservative_info = None
@@ -339,6 +361,7 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
             timings=timings,
             validity=validity,
             warnings=warnings,
+            pathlines=pathlines,
             provenance={
                 "models": {"flow": validity["model"], "pattern": "pattern_partition"},
                 "fidelity": cfg.model.fidelity,

@@ -68,6 +68,36 @@ class Section:
 
 
 @dataclass
+class Pathlines:
+    """Forward pathlines from the inlets to the outlet, used only for display (3D view animation).
+
+    Line ``i`` is sampled at ``points[i, j]`` (``[x, y, z]``) with cumulative residence time
+    ``time[i, j]``; samples a line does not have (before its port, after it ends) are NaN.
+    ``status`` uses the transport codes; ``REACHED_PLANE`` (0) means the line left through the
+    outlet. ``origin`` is 0 for the inlet pattern and ``k`` for the k-th port (1-based, project order
+    of the port inlets).
+    """
+
+    points: np.ndarray  # (n, m, 3) float32
+    time: np.ndarray  # (n, m) float32
+    code: np.ndarray  # (n,) int32 stream code
+    status: np.ndarray  # (n,) int8
+    origin: np.ndarray  # (n,) int16
+    outlet_x: float = 0.0
+
+    ARRAYS = ("points", "time", "code", "status", "origin")
+
+    def __post_init__(self) -> None:
+        n = len(self.code)
+        if self.points.shape[0] != n or self.points.ndim != 3 or self.points.shape[2] != 3:
+            raise ValueError("pathline points must have shape (n, m, 3)")
+        if self.time.shape != self.points.shape[:2]:
+            raise ValueError("pathline times must have shape (n, m)")
+        if self.status.shape != (n,) or self.origin.shape != (n,):
+            raise ValueError("pathline status and origin must have shape (n,)")
+
+
+@dataclass
 class SimulationResult:
     status: Status
     message: str = ""
@@ -82,6 +112,7 @@ class SimulationResult:
     validity: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     provenance: dict[str, Any] = field(default_factory=dict)
+    pathlines: Pathlines | None = None
     units: dict[str, str] = field(default_factory=lambda: {
         "length": "m", "flow_rate": "m3/s", "velocity": "m/s", "pressure": "Pa", "time": "s", "viscosity": "Pa s",
     })
@@ -100,7 +131,8 @@ class SimulationResult:
 
     # ---------------------------------------------------------------- persistence
     def meta(self) -> dict[str, Any]:
-        data = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "sections"}
+        data = {f.name: getattr(self, f.name) for f in fields(self) if f.name not in ("sections", "pathlines")}
+        data["pathlines"] = None if self.pathlines is None else {"outlet_x": self.pathlines.outlet_x}
         data["sections"] = [
             {
                 "name": s.name,
@@ -121,6 +153,9 @@ class SimulationResult:
                 value = getattr(section, name)
                 if value is not None:
                     arrays[f"s{index}_{name}"] = np.asarray(value)
+        if self.pathlines is not None:
+            for name in Pathlines.ARRAYS:
+                arrays[f"pathlines_{name}"] = np.asarray(getattr(self.pathlines, name))
         return arrays
 
     def save(self, path: str | Path) -> Path:
@@ -141,7 +176,12 @@ class SimulationResult:
             _check_section_arrays(arrays)
             sections.append(Section(name=info["name"], x=info["x"], grid_kind=info["grid_kind"],
                                     diagnostics=info["diagnostics"], **arrays))
-        return cls(sections=sections, **meta)
+        info = meta.pop("pathlines", None)
+        pathlines = None
+        if info is not None:
+            pathlines = Pathlines(outlet_x=float(info["outlet_x"]),
+                                  **{name: data[f"pathlines_{name}"] for name in Pathlines.ARRAYS})
+        return cls(sections=sections, pathlines=pathlines, **meta)
 
     @classmethod
     def load(cls, path: str | Path) -> "SimulationResult":
