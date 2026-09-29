@@ -20,5 +20,11 @@ docs/review/benchmark_results_rerun.json
 *.nbi
 *.nbc
 
+# Map libraries and COMSOL exports of the vendored 3D-hydrodynamic-flow-sculpting tool
+# (hundreds of MB; downloaded separately, see 3D-hydrodynamic-flow-sculpting/README.md)
+3D-hydrodynamic-flow-sculpting/generated_library_*/*.npy
+3D-hydrodynamic-flow-sculpting/generated_library_*/*.npy.gz
+3D-hydrodynamic-flow-sculpting/streamline_files_*/*.txt
+
 # Local scratch space
 temp/

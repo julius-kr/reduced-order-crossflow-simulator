@@ -16,6 +16,8 @@ PATTERN = re.compile(r"(?<!legacy/)(?<!legacy\\)(?<![\w.-])" + _OLD + r"[/\\](?:
 SCANNED_SUFFIXES = {".py", ".toml", ".cfg", ".ini", ".json", ".spec", ".bat", ".ps1", ".cmd", ".yml", ".yaml", ".txt"}
 EXCLUDED_DIRS = {".git", ".venv", "legacy", "build", "dist", "__pycache__", ".pytest_cache", "results"}
 HISTORICAL = {"docs/implementation_plan.md", "docs/review/benchmark_results.json"}
+# Published data of the vendored legacy CFD tool (GBs of COMSOL streamline exports and map libraries), not code.
+DATA_PREFIXES = ("3D-hydrodynamic-flow-sculpting/streamline_files_", "3D-hydrodynamic-flow-sculpting/generated_library_")
 
 
 def find_references(root: Path) -> list[dict]:
@@ -26,7 +28,7 @@ def find_references(root: Path) -> list[dict]:
         relative = path.relative_to(root)
         if relative.parts and (relative.parts[0] in EXCLUDED_DIRS or relative.parts[0].startswith(".venv")):
             continue
-        if relative.as_posix() in HISTORICAL:
+        if relative.as_posix() in HISTORICAL or relative.as_posix().startswith(DATA_PREFIXES):
             continue
         try:
             text = path.read_text(encoding="utf-8")

@@ -1,3 +1,5 @@
 # The legacy snapshot is hash-verified; never convert its line endings.
 legacy/** -text
 *.npz binary
+# Vendored 3D-hydrodynamic-flow-sculpting (legacy CFD) is hash-verified as well.
+3D-hydrodynamic-flow-sculpting/** -text
