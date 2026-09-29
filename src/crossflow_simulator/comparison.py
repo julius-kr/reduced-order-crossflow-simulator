@@ -1,6 +1,6 @@
-"""Legacy/new execution, comparable timings, aligned metrics, and export.
+"""Legacy/new/CFD execution, comparable timings, aligned metrics, accuracy against CFD, and export.
 
-Rules implemented here (plan section 11):
+Rules implemented here (plan section 11, extended by the CFD reference):
 
 * both backends receive the same physical case (same input hash) through
   explicit adapters; each shows its effective settings, and cases the legacy
@@ -13,7 +13,11 @@ Rules implemented here (plan section 11):
   runs with the same timing scope; cached lookups are never compared against
   fresh legacy solves;
 * legacy labels are regridded onto the new cell-centred grid by nearest
-  neighbour *for display and metrics only*; both native results are kept.
+  neighbour *for display and metrics only*; both native results are kept;
+* accuracy is measured only against the CFD reference (``cfd.py``), on its
+  grid and with its axial velocity, and is reported together with the CFD's
+  own mesh uncertainty. A difference smaller than that uncertainty cannot be
+  resolved by the reference.
 
 Agreement with legacy is a behavioural comparison, not evidence of accuracy.
 """
@@ -32,6 +36,7 @@ import numpy as np
 
 from . import metrics
 from .backends import get_backend
+from .calibration import TARGETS
 from .backends.client import WorkerClient
 from .config import ProjectConfig
 from .materials import colors_for
@@ -75,6 +80,7 @@ class ComparisonResult:
     speedup: dict = field(default_factory=dict)
     alignment: dict = field(default_factory=dict)
     benchmark: dict | None = None
+    accuracy: dict = field(default_factory=dict)  # per backend: agreement with the CFD reference
     created: float = field(default_factory=time.time)
 
     def is_current(self, cfg: ProjectConfig) -> bool:
@@ -94,7 +100,10 @@ class ComparisonResult:
             "speedup": self.speedup,
             "alignment": self.alignment,
             "benchmark": self.benchmark,
-            "interpretation": "Agreement with legacy is behavioural, not physical validation.",
+            "accuracy_vs_cfd": self.accuracy,
+            "interpretation": "Agreement with legacy is behavioural, not physical validation. Accuracy is measured "
+                              "against the CFD reference within its reported mesh uncertainty; the CFD reference is "
+                              "not externally validated.",
         }
 
 
@@ -118,7 +127,7 @@ class ComparisonService:
         self.workdir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="crossflow-compare-"))
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.on_update = on_update
-        self.backends = {name: get_backend(name) for name in ("legacy", "new")}
+        self.backends = {name: get_backend(name) for name in ("legacy", "new", "cfd")}
         self.clients: dict[str, WorkerClient] = {}
         self.worker_env = worker_env or {}
         self._startup: dict[str, float] = {}
@@ -151,8 +160,8 @@ class ComparisonService:
 
     # ------------------------------------------------------------------ single backend run
     def run_backend(self, name: str, cfg: ProjectConfig, comparison_id: str, timeout: float | None = None,
-                    clear_cache: bool = False) -> BackendRun:
-        """Run one backend in its worker."""
+                    clear_cache: bool = False, recompute: bool = False) -> BackendRun:
+        """Run one backend in its worker. ``recompute`` (CFD only) discards the stored CFD result first."""
         backend = self.backends[name]
         try:
             unsupported = backend.check(cfg)
@@ -175,6 +184,7 @@ class ComparisonService:
         job = backend.make_job(cfg, output)
         job["comparison_id"] = comparison_id
         job["clear_cache"] = clear_cache
+        job["recompute"] = recompute and name == "cfd"
         t0 = time.perf_counter()
         job_id = client.submit(job)
         self._notify("submitted", {"backend": name, "job_id": job_id, "comparison_id": comparison_id})
@@ -189,7 +199,10 @@ class ComparisonService:
             return BackendRun(name, "failed", str(exc), job_id=job_id, effective_settings=effective)
         result = backend.load_result(message, cfg)
         elapsed = time.perf_counter() - t0
-        cache_state = "cleared" if clear_cache else ("n/a" if name == "legacy" else "warm-worker")
+        if name == "cfd":
+            cache_state = str(result.diagnostics.get("cache", "computed"))
+        else:
+            cache_state = "cleared" if clear_cache else ("n/a" if name == "legacy" else "warm-worker")
         run = BackendRun(
             backend=name, status=result.status, message=result.message, job_id=job_id,
             solve_seconds=message.get("solve_seconds"), end_to_end_seconds=elapsed,
@@ -202,14 +215,16 @@ class ComparisonService:
 
     # ------------------------------------------------------------------ paired run
     def run_set(self, cfg: ProjectConfig, names: tuple[str, ...] = ("new", "legacy"),
-                timeouts: dict[str, float | None] | None = None, clear_cache: bool = False) -> ComparisonResult:
+                timeouts: dict[str, float | None] | None = None, clear_cache: bool = False,
+                recompute_cfd: bool = False) -> ComparisonResult:
         """Run the named backends sequentially (in the given order) on the same case."""
-        timeouts = {"new": 600.0, "legacy": 1800.0, **(timeouts or {})}
+        timeouts = {"new": 600.0, "legacy": 1800.0, "cfd": 7200.0, **(timeouts or {})}
         comparison_id = uuid.uuid4().hex[:12]
         runs: dict[str, BackendRun] = {}
         for name in names:
             runs[name] = self.run_backend(name, cfg, comparison_id, timeouts.get(name),
-                                          clear_cache=clear_cache and name == "new")
+                                          clear_cache=clear_cache and name == "new",
+                                          recompute=recompute_cfd and name == "cfd")
         comparison = build_comparison(cfg, runs, comparison_id)
         self._notify("comparison", {"comparison_id": comparison_id})
         return comparison
@@ -277,7 +292,103 @@ def build_comparison(cfg: ProjectConfig, runs: dict[str, BackendRun], comparison
                                   _snapshot_info() if "legacy" in runs else {}, dict(runs))
     comparison.metrics, comparison.alignment = compare_results(runs.get("legacy"), runs.get("new"))
     comparison.speedup = speedup(runs.get("legacy"), runs.get("new"))
+    reference = runs.get("cfd")
+    if reference is not None and reference.result is not None and reference.result.ok:
+        for name in ("new", "legacy"):
+            run = runs.get(name)
+            if run is not None and run.result is not None and run.result.ok and run.result.final is not None:
+                comparison.accuracy[name] = accuracy_against(reference.result, run.result)
+                comparison.accuracy[name]["speed"] = speed_against_cfd(run, reference)
     return comparison
+
+
+def cfd_compute_seconds(run: BackendRun) -> float | None:
+    """How long the CFD reference took to compute (also when this run loaded it from the disk cache)."""
+    if run.result is not None:
+        value = run.result.diagnostics.get("computed_seconds")
+        if value:
+            return float(value)
+    return run.solve_seconds
+
+
+def speed_against_cfd(run: BackendRun | SimulationResult, reference: BackendRun) -> dict[str, Any]:
+    seconds = run.solve_seconds if isinstance(run, BackendRun) else run.timings.get("total")
+    cfd_seconds = cfd_compute_seconds(reference)
+    if not seconds or not cfd_seconds:
+        return {"value": None, "reason": "timings unavailable"}
+    return {"value": cfd_seconds / seconds, "seconds": seconds, "cfd_seconds": cfd_seconds,
+            "note": "CFD compute time (measured when it was computed) / this solve time; different grids and models"}
+
+
+def accuracy_against(reference: SimulationResult, result: SimulationResult, station: int | None = None,
+                     ) -> dict[str, Any]:
+    """Agreement of ``result`` with the CFD reference at one station (default: the final sections).
+
+    Codes are compared on the CFD section grid (a result on another grid is regridded by nearest
+    neighbour). The flux a stream gains or loses is weighted with the CFD's own axial velocity, and the
+    interface target of the validation workflow is widened by the CFD's mesh uncertainty.
+    """
+    same_stations = len(result.sections) == len(reference.sections)
+    index = -1 if station is None or not same_stations else station
+    target = reference.sections[index]
+    source = result.sections[index] if same_stations else result.final
+    aligned = (source.grid_kind == "cell_centred" and source.codes.shape == target.codes.shape
+               and np.allclose(source.y_edges, target.y_edges) and np.allclose(source.z_edges, target.z_edges))
+    predicted = source.codes if aligned else metrics.regrid_nearest(source, target.y, target.z)
+    spacing = (float(np.diff(target.z_edges).mean()), float(np.diff(target.y_edges).mean()))
+    height = float(target.z_edges[-1] - target.z_edges[0])
+    weights = np.clip(target.axial_velocity, 0.0, None) * target.cell_area()
+    total = float(weights.sum())
+    convergence = (reference.diagnostics.get("cfd") or {}).get("mesh_convergence") or {}
+    uncertainty = 0.0
+    if convergence:
+        stations_info = convergence.get("stations") or []
+        entry = stations_info[index] if stations_info and -len(stations_info) <= index < len(stations_info) else None
+        uncertainty = float((entry or convergence).get("uncertainty_m", 0.0))
+    codes = sorted(int(c) for c in np.unique(target.codes) if c >= 0)
+    per_stream = {}
+    for code in codes:
+        a = metrics.centroid(predicted, code, target.y, target.z)
+        b = metrics.centroid(target.codes, code, target.y, target.z)
+        per_stream[code] = {
+            "iou": metrics.iou(predicted, target.codes, code),
+            "interface_shift_m": metrics.interface_shift(predicted, target.codes, code, spacing),
+            "interface_distance_m": metrics.interface_distance(predicted, target.codes, code, spacing),
+            "flux_misassigned": float((weights[predicted == code].sum() - weights[target.codes == code].sum()) / total),
+            "centroid_displacement_m": float(np.hypot(a[0] - b[0], a[1] - b[1])),
+        }
+    shifts = [e["interface_shift_m"] for e in per_stream.values() if np.isfinite(e["interface_shift_m"])]
+    ious = [e["iou"] for e in per_stream.values() if np.isfinite(e["iou"])]
+    fluxes = [abs(e["flux_misassigned"]) for e in per_stream.values()]
+    shift = max(shifts) if shifts else 0.0
+    targets = {
+        "interface_shift_m": TARGETS["interface_distance_fraction_of_height"] * height + uncertainty,
+        "iou_min": TARGETS["iou_min"],
+        "flux_misassigned_max": TARGETS["flux_fraction_error_max"],
+    }
+    passed = {
+        "interface": shift <= targets["interface_shift_m"],
+        "iou": (min(ious) if ious else 1.0) >= targets["iou_min"],
+        "flux": (max(fluxes) if fluxes else 0.0) <= targets["flux_misassigned_max"],
+    }
+    return {
+        "available": True,
+        "station": target.name,
+        "x_m": target.x,
+        "per_stream": per_stream,
+        "max_interface_shift_m": shift,
+        "max_interface_shift_fraction_of_H": shift / height,
+        "min_iou": min(ious) if ious else float("nan"),
+        "max_flux_misassigned": max(fluxes) if fluxes else 0.0,
+        "differing_cell_fraction": float(np.mean(predicted != target.codes)),
+        "cfd_uncertainty_m": uncertainty,
+        "within_cfd_uncertainty": bool(shift <= uncertainty) if uncertainty > 0 else shift == 0.0,
+        "targets": targets,
+        "passed": passed,
+        "within_targets": all(passed.values()),
+        "regridded": not aligned,
+        "note": "Interface target 2% of H widened by the CFD mesh uncertainty (as for external references).",
+    }
 
 
 def describe(values: list[float]) -> dict[str, float]:
@@ -358,7 +469,7 @@ def compare_results(legacy_run: BackendRun | None, new_run: BackendRun | None) -
 
 def export_comparison(comparison: ComparisonResult, directory: str | Path, length_unit: str = "um") -> Path:
     """Write every native result, aligned differences, figures, timings, protocol, configs, and versions."""
-    from .plotter import comparison_figure
+    from .plotter import sections_figure
 
     out = Path(directory)
     out.mkdir(parents=True, exist_ok=True)
@@ -370,14 +481,28 @@ def export_comparison(comparison: ComparisonResult, directory: str | Path, lengt
     for name, run in comparison.runs.items():
         if run.result is not None:
             run.result.save(out / f"{name}_result.npz")
+    panels = []
+    for name, title in (("legacy", "Legacy solver"), ("new", "New solver"), ("cfd", "CFD reference")):
+        run = comparison.runs.get(name)
+        if run is None:
+            continue
+        subtitle = ""
+        if name == "cfd":
+            seconds = cfd_compute_seconds(run)
+            subtitle = f"computed in {seconds:.3g} s" if seconds else ""
+        elif run.solve_seconds is not None:
+            subtitle = f"solve {run.solve_seconds:.3g} s"
+        accuracy = comparison.accuracy.get(name)
+        if accuracy:
+            subtitle += (f"; vs CFD: IoU {accuracy['min_iou']:.3f}, shift "
+                         f"{accuracy['max_interface_shift_m'] * 1e6:.2g} um")
+        result = run.result
+        panels.append((title, result, colors_for(result.streams) if result is not None and result.streams else {},
+                       subtitle))
+    sections_figure(panels, length_unit).savefig(out / "side_by_side.png", dpi=150)
     legacy, new = comparison.runs.get("legacy"), comparison.runs.get("new")
     lr = legacy.result if legacy else None
     nr = new.result if new else None
-    timings = {name: f"solve {run.solve_seconds:.3g} s" for name, run in (("Legacy solver", legacy), ("New solver", new))
-               if run is not None and run.solve_seconds is not None}
-    comparison_figure(lr, nr, colors_for(lr.streams) if lr is not None and lr.streams else {},
-                      colors_for(nr.streams) if nr is not None and nr.streams else {}, length_unit,
-                      timings).savefig(out / "side_by_side.png", dpi=150)
     if lr is not None and nr is not None and lr.ok and nr.ok:
         a, b, _ = aligned_codes(lr, nr)
         np.savez_compressed(out / "differences.npz", legacy_on_new_grid=a, new=b, differs=(a != b),
@@ -390,9 +515,11 @@ def export_comparison(comparison: ComparisonResult, directory: str | Path, lengt
         "effective_settings.json each backend's effective settings and unsupported features\n"
         f"{names}  native results (crossflow-result/1)\n"
         "differences.npz        legacy labels regridded (nearest) onto the new grid, and the difference mask\n"
-        "side_by_side.png       final sections on physical axes (legacy left, new right)\n"
-        "comparison.json        statuses, timings, memory, metrics, speedup scope, benchmark protocol, versions\n\n"
-        "Agreement between the solvers is a behavioural comparison, not physical validation.\n",
+        "side_by_side.png       final sections on physical axes (legacy, new, CFD reference)\n"
+        "comparison.json        statuses, timings, memory, metrics, speedup scope, accuracy against the CFD\n"
+        "                       reference, benchmark protocol, versions\n\n"
+        "Agreement between the solvers is a behavioural comparison, not physical validation. Accuracy is\n"
+        "measured against the CFD reference within its reported mesh uncertainty.\n",
         encoding="utf-8",
     )
     return out

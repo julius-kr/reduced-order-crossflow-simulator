@@ -218,6 +218,7 @@ def trace(
     cancel: Callable[[], bool] | None = None,
     error_tolerance: float = 1e-3,
     use_kernel: bool = True,
+    step_budget: float = 1.0,
 ) -> TraceResult:
     """Integrate streamlines from ``seeds`` until they reach ``x = stop_x`` or an opening.
 
@@ -225,7 +226,8 @@ def trace(
     difference between the Euler and midpoint displacements estimates the local
     error, which is kept below ``error_tolerance`` times the smallest cell
     width. Steps never exceed one cell, so walls and solids cannot be skipped.
-    ``rk4`` uses fixed steps of ``step``.
+    ``rk4`` uses fixed steps of ``step``. ``step_budget`` scales the adaptive step limit (the CFD
+    reference traces through the whole channel and allows slow near-wall paths more steps).
     """
     grid = velocity.grid
     seeds = np.asarray(seeds, dtype=float)
@@ -239,7 +241,7 @@ def trace(
     max_length = 6.0 * extent if max_length is None else max_length
     # Step budget: generous for trajectories of twice the domain length; trajectories trapped at
     # stagnation corners exhaust it and are reported as MAX_LENGTH instead of stalling the batch.
-    max_steps = (4 * (int(np.ceil(2.0 * extent / ds)) + 1) if adaptive
+    max_steps = (int(step_budget * 4 * (int(np.ceil(2.0 * extent / ds)) + 1)) if adaptive
                  else int(np.ceil(max_length / ds)) + 1)
     if adaptive and use_kernel and n:
         from . import transport_kernel

@@ -1,4 +1,4 @@
-"""Isolated worker process for the new solver.
+"""Isolated worker process for the new solver (and, for ``"solver": "cfd"`` jobs, the CFD reference).
 
 Launched with ``python -I`` and an explicit source root, so it loads exactly
 the new package that launched it (asserted in the hello message) and never the
@@ -95,7 +95,13 @@ def main() -> int:
 
                 memory_cache().clear()
             config = ProjectConfig.from_dict(job["config"])
-            result = simulate(config, progress=progress, cancel=cancel.is_set)
+            if job.get("solver") == "cfd":
+                from crossflow_simulator.cfd import run_cfd
+
+                result = run_cfd(config, progress=progress, cancel=cancel.is_set,
+                                 recompute=bool(job.get("recompute")))
+            else:
+                result = simulate(config, progress=progress, cancel=cancel.is_set)
             path = Path(job["output"])
             result.save(path)
             channel.send({"type": "result", "job_id": job_id, "status": result.status, "message": result.message,

@@ -61,6 +61,25 @@ def interface_distance(a: np.ndarray, b: np.ndarray, code: int, spacing: tuple[f
     return float(0.5 * (da[ba].mean() + db[bb].mean()))
 
 
+def _interface_length(mask: np.ndarray, spacing: tuple[float, float]) -> float:
+    dz, dy = spacing
+    return float(np.count_nonzero(mask[1:, :] != mask[:-1, :]) * dy + np.count_nonzero(mask[:, 1:] != mask[:, :-1]) * dz)
+
+
+def interface_shift(a: np.ndarray, b: np.ndarray, code: int, spacing: tuple[float, float]) -> float:
+    """Mean normal displacement between the ``code`` regions: differing area / interface length (physical units).
+
+    Unlike the boundary distance, it is not dominated by thin filaments or folds (where the
+    nearest boundary can jump between branches), and it resolves shifts below one grid cell on
+    average. Interface length counts cell edges on the section grid; wall boundaries do not count.
+    """
+    ma, mb = a == code, b == code
+    length = 0.5 * (_interface_length(ma, spacing) + _interface_length(mb, spacing))
+    if length <= 0:
+        return float("nan")
+    return float(np.count_nonzero(ma != mb) * spacing[0] * spacing[1] / length)
+
+
 def centroid(codes: np.ndarray, code: int, y: np.ndarray, z: np.ndarray, weights: np.ndarray | None = None):
     mask = codes == code
     w = mask.astype(float) if weights is None else np.where(mask, weights, 0.0)

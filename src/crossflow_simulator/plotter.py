@@ -104,6 +104,23 @@ def draw_top_view(ax, config: dict, length_unit: str = "um") -> None:
     ax.set_ylabel(f"y [{length_unit}]")
 
 
+def sections_figure(panels: list[tuple[str, SimulationResult | None, dict[int, str], str]], length_unit: str = "um"):
+    """Final sections side by side on the same physical axes; each panel is (title, result, colours, subtitle)."""
+    count = max(len(panels), 1)
+    fig, axes = plt.subplots(1, count, figsize=(5 * count, 3.6), sharex=True, sharey=True, squeeze=False)
+    for index, (ax, (name, result, colors, subtitle)) in enumerate(zip(axes[0], panels)):
+        if result is None or not result.ok or result.final is None:
+            status = "not run" if result is None else f"{result.status}: {result.message[:80]}"
+            ax.text(0.5, 0.5, f"{name}\n{status}", ha="center", va="center", transform=ax.transAxes, wrap=True)
+            ax.set_axis_off()
+            continue
+        title = f"{name}\n{subtitle}" if subtitle else name
+        draw_section(ax, result.final, colors, length_unit, stream_labels(result), title,
+                     legend=index == len(panels) - 1)
+    fig.tight_layout()
+    return fig
+
+
 def comparison_figure(legacy: SimulationResult | None, new: SimulationResult | None, colors_legacy: dict[int, str],
                       colors_new: dict[int, str], length_unit: str = "um", timings: dict | None = None):
     """Side-by-side final sections: legacy on the left, new on the right, same physical axes."""

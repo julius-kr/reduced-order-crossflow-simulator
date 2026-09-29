@@ -28,8 +28,10 @@ set `CROSSFLOW_LEGACY_PYTHON` to its interpreter.
 ```powershell
 crossflow run examples/right_triangle_bottom.json --figure sections.png
 crossflow run examples/right_triangle_bottom.json --backend legacy
+crossflow run examples/right_triangle_bottom.json --backend cfd --cfd-cells 24   # CFD reference
 crossflow compare examples/parallel_unequal.json --export report/      # paired legacy/new run
-crossflow bench examples/parallel_unequal.json --trials 3              # repeatable benchmark protocol
+crossflow compare examples/right_triangle_bottom.json --cfd            # legacy, new, and accuracy vs CFD
+crossflow compare examples/parallel_unequal.json --benchmark 3         # repeatable benchmark protocol
 crossflow sweep examples/serial_three_inlets.json --set inlets.1.flow_rate_m3_s --values 1e-11,3e-11 --csv sweep.csv
 crossflow validate-references reference_data/analytical
 crossflow verify-snapshot                        # legacy hashes and migration state

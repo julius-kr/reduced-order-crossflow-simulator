@@ -1,8 +1,7 @@
 """Command-line interface: headless runs, comparison, benchmarks, validation, and maintenance.
 
-    crossflow run CONFIG [--backend new|legacy] [--inline] [--out result.npz] [--figure fig.png]
-    crossflow compare CONFIG [--export DIR]
-    crossflow bench CONFIG [--trials N]
+    crossflow run CONFIG [--backend new|legacy|cfd] [--inline] [--out result.npz] [--figure fig.png]
+    crossflow compare CONFIG [--cfd] [--no-legacy] [--export DIR] [--benchmark N]
     crossflow validate CONFIG
     crossflow sweep CONFIG --set PATH --values V1,V2,... [--csv out.csv]
     crossflow validate-references DIR [--out report.json]
@@ -29,14 +28,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     cfg = ProjectConfig.load(args.config)
     if args.fidelity:
         cfg.model.fidelity = args.fidelity
-    if args.inline and args.backend == "new":
+    if args.cfd_cells:
+        cfg.cfd.cells = args.cfd_cells
+    if args.inline and args.backend in ("new", "cfd"):
+        from .cfd import run_cfd
         from .simulator import simulate
 
         def progress(stage, fraction, message):
             if not args.quiet:
                 print(f"[{fraction:5.1%}] {stage}: {message}", file=sys.stderr)
 
-        result = simulate(cfg, progress=progress)
+        result = (run_cfd if args.backend == "cfd" else simulate)(cfg, progress=progress)
     else:
         import tempfile
 
@@ -82,9 +84,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
     from .config import ProjectConfig
 
     cfg = ProjectConfig.load(args.config)
+    if args.cfd_cells:
+        cfg.cfd.cells = args.cfd_cells
     service = ComparisonService()
     try:
-        comparison = service.run_pair(cfg, clear_cache=True)
+        if args.benchmark:
+            comparison = service.benchmark(cfg, trials=args.benchmark)
+        else:
+            names = ("new",) + (() if args.no_legacy else ("legacy",)) + (("cfd",) if args.cfd else ())
+            comparison = service.run_set(cfg, names, clear_cache=True)
     finally:
         service.close()
     summary = comparison.summary()
@@ -92,26 +100,15 @@ def cmd_compare(args: argparse.Namespace) -> int:
             "runs": {k: {x: v.get(x) for x in ("status", "message", "solve_seconds", "end_to_end_seconds",
                                                "startup_seconds", "cache_state", "unsupported")}
                      for k, v in summary["runs"].items()},
-            "speedup": summary["speedup"], "metrics": summary["metrics"]})
+            "speedup": summary["speedup"], "metrics": summary["metrics"],
+            "accuracy_vs_cfd": {k: {x: v.get(x) for x in ("station", "min_iou", "max_interface_shift_m",
+                                                           "max_flux_misassigned", "cfd_uncertainty_m",
+                                                           "within_targets", "within_cfd_uncertainty", "speed")}
+                                for k, v in summary["accuracy_vs_cfd"].items()},
+            "benchmark": summary["benchmark"]})
     if args.export:
         export_comparison(comparison, args.export, cfg.display.length_unit)
         print(f"Exported to {args.export}", file=sys.stderr)
-    return 0
-
-
-def cmd_bench(args: argparse.Namespace) -> int:
-    from .comparison import ComparisonService
-    from .config import ProjectConfig
-
-    cfg = ProjectConfig.load(args.config)
-    service = ComparisonService()
-    try:
-        comparison = service.benchmark(cfg, trials=args.trials)
-    finally:
-        service.close()
-    summary = comparison.summary()
-    _print({"comparison_id": summary["comparison_id"], "speedup": summary["speedup"],
-            "statistics": summary["benchmark"]["statistics"], "cold": summary["benchmark"]["cold"]})
     return 0
 
 
@@ -207,21 +204,22 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="run one backend on a project file")
     run.add_argument("config")
-    run.add_argument("--backend", choices=["new", "legacy"], default="new")
-    run.add_argument("--inline", action="store_true", help="run the new solver in this process")
+    run.add_argument("--backend", choices=["new", "legacy", "cfd"], default="new")
+    run.add_argument("--inline", action="store_true", help="run the new solver or the CFD reference in this process")
     run.add_argument("--fidelity", choices=["preview", "medium", "reference"])
+    run.add_argument("--cfd-cells", type=int, help="CFD reference grid: cells across the smaller dimension")
     run.add_argument("--out")
     run.add_argument("--figure")
     run.add_argument("--quiet", action="store_true")
     run.set_defaults(func=cmd_run)
-    compare = sub.add_parser("compare", help="run the new and the legacy solver on the same case")
+    compare = sub.add_parser("compare", help="run the new solver with legacy and/or the CFD reference")
     compare.add_argument("config")
+    compare.add_argument("--cfd", action="store_true", help="also run the CFD reference and report accuracy")
+    compare.add_argument("--no-legacy", action="store_true", help="skip the legacy solver")
+    compare.add_argument("--cfd-cells", type=int, help="CFD reference grid: cells across the smaller dimension")
     compare.add_argument("--export")
+    compare.add_argument("--benchmark", type=int, default=0, metavar="TRIALS")
     compare.set_defaults(func=cmd_compare)
-    bench = sub.add_parser("bench", help="repeatable legacy/new benchmark protocol")
-    bench.add_argument("config")
-    bench.add_argument("--trials", type=int, default=3)
-    bench.set_defaults(func=cmd_bench)
     validate = sub.add_parser("validate", help="validate a project file")
     validate.add_argument("config")
     validate.set_defaults(func=cmd_validate)

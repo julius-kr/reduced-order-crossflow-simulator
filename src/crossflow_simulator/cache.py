@@ -133,6 +133,14 @@ class DiskCache:
         except OSError:
             pass
 
+    def delete(self, namespace: str, key: str) -> bool:
+        """Remove one entry; True if it existed."""
+        try:
+            self._path(namespace, key).unlink()
+            return True
+        except OSError:
+            return False
+
     def _evict(self) -> None:
         files = []
         for path in (self.root / CACHE_FORMAT.replace("/", "-")).rglob("*.npz"):

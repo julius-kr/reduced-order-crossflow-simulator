@@ -58,6 +58,29 @@ MODEL_CARDS: dict[str, dict[str, Any]] = {
         "externally_validated": False,
         "envelope": {"reynolds_max": 1.0, "viscosity_ratio": [0.1, 10.0], "status": "experimental"},
     },
+    "cfd_reference": {
+        "title": "CFD reference (full-channel 3D Navier-Stokes)",
+        "description": (
+            "One staggered finite-volume solve of the steady incompressible Navier-Stokes equations over the "
+            "whole channel, from an inflow buffer upstream of x = 0 to an outflow buffer beyond the outlet, "
+            "refined at every feature; inertia by Picard iterations, viscosity following the materials. Every "
+            "output cell is traced back individually, and a second, coarser grid estimates the mesh uncertainty."
+        ),
+        "assumptions": [
+            "steady, incompressible, Newtonian, isothermal flow of miscible liquids",
+            "sharp interfaces (no diffusion); density enters only the inertia term (flux-weighted mean)",
+            "inlet pattern developed at the end of the inflow buffer; circular ports with Poiseuille inflow",
+            "pillars voxelized on the CFD grid (staircase surfaces converge at first order)",
+        ],
+        "verified_by": [
+            "the verification of the shared Stokes discretization and tracer (see stokes_map)",
+            "second-order convective operator on analytic fields",
+            "exact developed flow in a straight channel, including inertia",
+            "grid-convergence estimate reported with every result",
+        ],
+        "externally_validated": False,
+        "envelope": {"reynolds_max": 50.0, "status": "numerical reference; shares code with the new solver"},
+    },
     "pattern_partition": {
         "title": "Flux-constrained inlet pattern",
         "description": "Patch boundaries of the prescribed inlet pattern carry each inlet's flow rate exactly "
@@ -114,7 +137,7 @@ def assess(
     elif not envelope_ok:
         label = "outside verified envelope (extrapolation, experimental)"
     elif not numerics_ok:
-        label = "numerical quality below target (refine the flow grid)"
+        label = "numerical quality below target (check it against the CFD reference)"
     else:
         label = "inside numerically verified envelope; not externally validated"
     return {

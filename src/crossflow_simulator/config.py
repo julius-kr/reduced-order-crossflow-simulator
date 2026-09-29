@@ -171,6 +171,16 @@ class LegacySettings:
 
 
 @dataclass
+class CFDSettings:
+    """CFD reference settings (see ``cfd.py``). Not part of the new solver's input hash."""
+
+    cells: int = 24  # grid cells across the smaller channel dimension on the reference grid
+    convergence_check: bool = True  # also solve a coarser grid (2/3 of the cells) to estimate mesh uncertainty
+    inertia: bool = True  # steady Navier-Stokes (Picard iterations); off: creeping flow
+    buffer: float = 2.0  # inflow and outflow buffers, in channel sizes max(W, H)
+
+
+@dataclass
 class DisplaySettings:
     length_unit: str = "um"
     flow_unit: str = "uL/min"
@@ -190,6 +200,7 @@ class ProjectConfig:
     grid: GridSpec = field(default_factory=GridSpec)
     model: ModelSettings = field(default_factory=ModelSettings)
     legacy: LegacySettings = field(default_factory=LegacySettings)
+    cfd: CFDSettings = field(default_factory=CFDSettings)
     display: DisplaySettings = field(default_factory=DisplaySettings)
     name: str = "untitled"
     notes: str = ""
@@ -229,9 +240,10 @@ class ProjectConfig:
         Path(path).write_text(self.to_json() + "\n", encoding="utf-8")
 
     def input_hash(self) -> str:
-        """Hash of every input that can affect a new-solver result (display settings excluded)."""
+        """Hash of every input that can affect a new-solver result (display and CFD settings excluded)."""
         data = self.to_dict()
         data.pop("display", None)
+        data.pop("cfd", None)
         data.pop("name", None)
         data.pop("notes", None)
         return geometry.stable_hash(data)
@@ -432,6 +444,10 @@ def validate_config(cfg: ProjectConfig) -> list[Issue]:
         add("error", "model.step_fraction", "Must be in (0, 1].")
     if cfg.grid.output_ny < 8:
         add("error", "grid.output_ny", "Output grid needs at least 8 cells across the width.")
+    if not 8 <= cfg.cfd.cells <= 64:
+        add("error", "cfd.cells", "CFD reference grid needs 8 to 64 cells across the smaller channel dimension.")
+    if not cfg.cfd.buffer >= 0.5:
+        add("error", "cfd.buffer", "CFD inflow/outflow buffers must be at least half a channel size.")
     return issues
 
 

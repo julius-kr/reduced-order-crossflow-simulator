@@ -407,13 +407,28 @@ class StokesProblem:
         method: Literal["auto", "direct", "minres"] = "auto",
         tolerance: float = 1e-12,
         cancel: Callable[[], bool] | None = None,
+        force: np.ndarray | None = None,
+        initial: StokesSolution | None = None,
+        velocity_scale: float | None = None,
+        max_residual: float | None = None,
     ) -> StokesSolution:
-        """Solve for the prescribed boundary values (a full face vector, see :meth:`boundary_values`)."""
+        """Solve for the prescribed boundary values.
+
+        ``force`` is a full face vector of body forces integrated over the momentum control
+        volumes (N), for example the lagged convective term of a Picard iteration. ``initial``
+        warm-starts the iterative solver. ``velocity_scale`` sets the nondimensional velocity
+        unit when all boundary values vanish (a force-driven correction). ``max_residual`` is the
+        accepted true relative residual (default ``max(1e-5, 1e3 * tolerance)``); corrections that
+        only need accuracy relative to their own size may accept more.
+        """
         started = time.perf_counter()
-        velocity_scale = float(np.max(np.abs(known_values))) or 1.0
+        velocity_scale = velocity_scale or float(np.max(np.abs(known_values))) or 1.0
         known_nd = known_values / velocity_scale
         x_known = known_nd[self.known]
         f = -(self.A_known @ x_known)
+        if force is not None:
+            f = f + np.asarray(force, dtype=float)[self.unknown] / (
+                self.viscosity_scale * self.length_scale * velocity_scale)
         g = self.B_known_pinned @ x_known
         rhs = np.concatenate([f, g])
         method = self._choose(method)
@@ -433,14 +448,15 @@ class StokesProblem:
                 if cancel is not None and counter["n"] % 10 == 0 and cancel():
                     raise SolveCancelled()
 
-            solution, status = minres(self.K, rhs, M=M, rtol=tolerance, maxiter=5000, callback=callback)
+            x0 = None if initial is None else self._initial_vector(initial, velocity_scale)
+            solution, status = minres(self.K, rhs, x0=x0, M=M, rtol=tolerance, maxiter=5000, callback=callback)
             iterations = counter["n"]
             if status != 0:
                 raise RuntimeError(f"MINRES did not converge (status {status})")
         else:
             raise ValueError(f"Unknown linear solver {method!r}")
         residual = float(np.linalg.norm(self.K @ solution - rhs) / max(np.linalg.norm(rhs), 1e-300))
-        if residual > max(1e-5, 1e3 * tolerance):
+        if residual > (max_residual if max_residual is not None else max(1e-5, 1e3 * tolerance)):
             raise RuntimeError(f"Stokes solve failed: relative residual {residual:.2e} after {iterations} iterations")
         full = known_nd.copy()
         full[self.unknown] = solution[: self.n_velocity]
@@ -468,6 +484,13 @@ class StokesProblem:
             "factorization_seconds": self.timings.get("factorization", 0.0),
         }
         return StokesSolution(self.grid, self.solid, u, v, w, pressure, info)
+
+    def _initial_vector(self, initial: StokesSolution, velocity_scale: float) -> np.ndarray:
+        """Nondimensional unknown vector (velocities, pinned pressures) of a solution on this grid."""
+        full = np.concatenate([initial.u.ravel(), initial.v.ravel(), initial.w.ravel()]) / velocity_scale
+        pressure = initial.p.ravel()[self.pressure_cells]
+        pressure = (pressure - pressure[-1]) / (self.viscosity_scale * velocity_scale / self.length_scale)
+        return np.concatenate([full[self.unknown], pressure[:-1]])
 
     def _preconditioner(self) -> LinearOperator:
         """Block-diagonal preconditioner: velocity blocks (AMG V-cycle or exact LU) and scaled pressure mass."""
