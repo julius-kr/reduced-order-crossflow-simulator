@@ -23,11 +23,11 @@ from .config import ProjectConfig, validate_config
 from .inlets import partition_pattern, pattern_grid
 from .geometry import stable_hash
 from .maps import (
-    KIND_PATTERN, ChainLink, ConservativeRemap, FlowChain, SectionMap, adaptive_section, group_map,
-    pattern_fractions, subcell_fractions,
+    KIND_PATTERN, ChainLink, ConservativeRemap, FlowChain, SectionMap, adaptive_section, fill_trajectory_gaps,
+    group_map, pattern_fractions, subcell_fractions,
 )
 from .materials import stream_table
-from .models.domain import build_domain, channel_extent, plan_groups
+from .models.domain import build_domain, channel_extent, plan_groups, section_solid
 from .models.stokes_map import coupled_viscosity_flow, equal_property_flow
 from .models.validity import assess
 from .pathlines import compute_pathlines, recolor
@@ -242,15 +242,24 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
                 else:
                     smap = _reapply_map(cached_maps["maps"][g], partition.evaluate)
                     x_end = domain.group.x_end
-                fractions = subcell_fractions(smap.code, smap.kind, smap.donor_y, smap.donor_z, y_edges, z_edges,
+                # Cells without a valid trajectory take their neighbours' label. This works on the section's
+                # codes only: the donor map (used by later sections and cached) keeps the raw result.
+                name = f"after {domain.group.label}"
+                section_codes, filled, fill = fill_trajectory_gaps(
+                    smap.code, section_solid(cfg, x_end, yc, zc), yc, zc, cfg.model.max_fill_cells)
+                warnings.extend(_fill_warnings(name, fill))
+                fractions = subcell_fractions(section_codes, smap.kind, smap.donor_y, smap.donor_z, y_edges, z_edges,
                                               partition.evaluate, n_streams, samples)
+                trajectory_status = dict(smap.diagnostics.get("trajectory_status", {}),
+                                         filled_from_neighbours=fill["filled"])
                 sections.append(Section(
-                    name=f"after {domain.group.label}", x=x_end, y_edges=y_edges, z_edges=z_edges,
-                    codes=smap.code, status=smap.status,
-                    axial_velocity=section_velocity(smap.code, flux_rate),
+                    name=name, x=x_end, y_edges=y_edges, z_edges=z_edges,
+                    codes=section_codes, status=smap.status, filled=filled,
+                    axial_velocity=section_velocity(section_codes, flux_rate),
                     fractions=fractions.astype(np.float32),
                     donor_y=smap.donor_y, donor_z=smap.donor_z, residence_time=smap.residence,
-                    diagnostics={**smap.diagnostics, "expected_flux_m3_s": dict(expected)},
+                    diagnostics={**smap.diagnostics, "trajectory_status": trajectory_status, "trajectory_fill": fill,
+                                 "expected_flux_m3_s": dict(expected)},
                 ))
             if not domains:
                 sections.append(Section(
@@ -311,7 +320,9 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
                 })
             final = sections[-1]
             max_error = max(c["max_flux_fraction_error"] for c in section_checks)
-            invalid = float(np.mean(final.codes < 0))
+            # numerical quality is judged on the trajectories as traced, before any gap filling
+            fill = final.diagnostics.get("trajectory_fill")
+            invalid = fill["failed"] / max(fill["flow_cells"], 1) if fill else float(np.mean(final.codes < 0))
             total_rate = sum(rates.values())
             densest = max(cfg.material(i.material).density for i in active)
             reynolds = physics.reynolds_number(total_rate, W, H, densest, mu_values[0])
@@ -377,6 +388,18 @@ def simulate(cfg: ProjectConfig, progress: ProgressFn | None = None,
             "failed", f"{type(exc).__name__}: {exc}", timings=watch.timings,
             diagnostics={"traceback": traceback.format_exc()}, **base,
         )
+
+
+def _fill_warnings(section: str, fill: dict) -> list[str]:
+    if fill["skipped"]:
+        return [f"{section}: {fill['skipped']}; no cells were filled from their neighbours, since that points to a "
+                "real problem."]
+    patches = fill["unfilled_patches"]
+    if not patches:
+        return []
+    return [f"{section}: {sum(patches)} cells in {len(patches)} patch{'es' if len(patches) > 1 else ''} of "
+            f"{', '.join(map(str, patches))} cells without valid trajectories were not filled (patches over "
+            f"model.max_fill_cells = {fill['max_fill_cells']} cells stay unfilled)."]
 
 
 def _rescaled_flow_info(cached: dict, viscosity: float, total_rate: float) -> list[dict]:
@@ -484,7 +507,16 @@ def _conservative_transport(cfg, links, sections, y_edges, z_edges, rates, codes
                                   sections[g + 1].axial_velocity * area, port_rates)
         port_streams = [codes[pid] - 1 for pid in domains[g].port_ids]
         fractions, remap_info = remap.apply(fractions, port_streams)
-        sections[g + 1].fractions = fractions.astype(np.float32)
+        # Cells that no traced fluid reaches carry no fractions; like the section codes, the shown section
+        # gives them their filled neighbour label. The next remap starts from the unfilled fractions.
+        section = sections[g + 1]
+        shown = fractions.copy()
+        empty = fractions.sum(axis=0) < 1e-9
+        fill = empty & (section.filled if section.filled is not None else False) & (section.codes >= 1)
+        kk, jj = np.nonzero(fill)
+        shown[section.codes[kk, jj] - 1, kk, jj] = 1.0
+        section.fractions = shown.astype(np.float32)
+        remap_info.update(empty_cells=int(empty.sum()), filled_from_neighbours=int(fill.sum()))
         info["groups"].append({**remap_info, "map": gmap.diagnostics})
     info["note"] = "Sequential conservative remap; section flux fractions use these fractions."
     return info

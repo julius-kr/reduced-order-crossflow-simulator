@@ -105,6 +105,20 @@ def plan_groups(cfg: ProjectConfig) -> list[FlowGroup]:
     return groups
 
 
+def section_solid(cfg: ProjectConfig, x: float, y: np.ndarray, z: np.ndarray) -> np.ndarray:
+    """Output cells (centres ``y``, ``z``) inside an enabled pillar at streamwise station ``x``, ``[z, y]``."""
+    H = cfg.channel.height
+    solid = np.zeros((len(z), len(y)), dtype=bool)
+    for pillar in cfg.active_pillars():
+        inside = geometry.points_in_polygon(np.full(len(y), float(x)), np.asarray(y, dtype=float),
+                                            pillar.footprint())
+        if not inside.any():
+            continue
+        low, high = (0.0, pillar.height) if pillar.mount == "bottom" else (H - pillar.height, H)
+        solid |= ((z >= low) & (z <= high))[:, None] & inside[None, :]
+    return solid
+
+
 def flow_cells(cfg: ProjectConfig) -> tuple[int, int]:
     W, H = cfg.channel.width, cfg.channel.height
     n_small = FIDELITY_CELLS[cfg.model.fidelity]

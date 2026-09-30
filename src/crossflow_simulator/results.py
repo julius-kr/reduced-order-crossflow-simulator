@@ -18,7 +18,7 @@ RESULT_SCHEMA = "crossflow-result/1"
 Status = Literal["success", "failed", "cancelled", "unsupported"]
 
 _SECTION_ARRAYS = ("y_edges", "z_edges", "codes", "status", "axial_velocity", "fractions", "donor_y", "donor_z",
-                   "residence_time")
+                   "residence_time", "filled")
 
 
 @dataclass
@@ -36,6 +36,8 @@ class Section:
     donor_y: np.ndarray | None = None
     donor_z: np.ndarray | None = None
     residence_time: np.ndarray | None = None
+    # True where the cell had no valid trajectory and took its neighbours' label (``status`` keeps the raw one)
+    filled: np.ndarray | None = None
     grid_kind: Literal["cell_centred", "legacy_nodes"] = "cell_centred"
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
@@ -193,7 +195,7 @@ def _check_section_arrays(arrays: dict[str, np.ndarray]) -> None:
     codes = arrays["codes"]
     if codes.ndim != 2 or not np.issubdtype(codes.dtype, np.integer):
         raise ValueError("section codes must be a 2D integer array")
-    for name in ("status", "axial_velocity", "donor_y", "donor_z", "residence_time"):
+    for name in ("status", "axial_velocity", "donor_y", "donor_z", "residence_time", "filled"):
         if name in arrays and arrays[name].shape != codes.shape:
             raise ValueError(f"section array {name} has shape {arrays[name].shape}, expected {codes.shape}")
     if "fractions" in arrays and arrays["fractions"].shape[1:] != codes.shape:

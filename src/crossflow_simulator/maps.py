@@ -341,6 +341,100 @@ def adaptive_section(
     return SectionMap(code, kind, status, donor_y, donor_z, residence, diagnostics)
 
 
+# --------------------------------------------------------------------------- filling trajectory gaps
+
+_NEIGHBOURS = [(dk, dj) for dk in (-1, 0, 1) for dj in (-1, 0, 1) if (dk, dj) != (0, 0)]
+
+
+def _shifted(a: np.ndarray, dk: int, dj: int, outside) -> np.ndarray:
+    """``a[k + dk, j + dj]`` at every (k, j); ``outside`` beyond the edges."""
+    out = np.full(a.shape, outside, dtype=a.dtype)
+    nz, ny = a.shape
+    out[max(-dk, 0):nz - max(dk, 0), max(-dj, 0):ny - max(dj, 0)] = \
+        a[max(dk, 0):nz + min(dk, 0), max(dj, 0):ny + min(dj, 0)]
+    return out
+
+
+def fill_trajectory_gaps(code: np.ndarray, solid: np.ndarray | None, y: np.ndarray, z: np.ndarray,
+                         max_fill_cells: int, max_failed_fraction: float = 0.01) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Give output cells without a valid trajectory the stream label of their valid neighbours.
+
+    Applied to finished section codes; the tracing and the stored donor maps are not changed. A
+    failed cell takes the most common label among its valid 8-neighbours; ties go to the label of
+    the nearest valid cell centre, then to the lower code. Rounds repeat until nothing more can be
+    filled, so small patches fill from the outside in (every round uses the labels of the previous
+    one, so the result does not depend on the order of the cells). Solid cells are never filled,
+    never used as a source, and a diagonal step between two solid cells is not taken. Only 8-connected
+    patches of at most ``max_fill_cells`` cells are filled; when more than ``max_failed_fraction``
+    of the flow cells failed, nothing is filled. Returns (codes, filled mask, report).
+    """
+    code = np.asarray(code)
+    solid = np.zeros(code.shape, dtype=bool) if solid is None else np.asarray(solid, dtype=bool)
+    failed = (code < 0) & ~solid
+    flow_cells = int((~solid).sum())
+    out = code.copy()
+    filled = np.zeros(code.shape, dtype=bool)
+    report = {"failed": int(failed.sum()), "flow_cells": flow_cells, "filled": 0, "unfilled": int(failed.sum()),
+              "unfilled_patches": [], "skipped": None, "max_fill_cells": int(max_fill_cells), "rounds": 0}
+    if not failed.any():
+        return out, filled, report
+    if failed.sum() > max_failed_fraction * flow_cells:
+        report["skipped"] = (f"{100 * failed.sum() / flow_cells:.2f}% of the flow cells have no valid trajectory "
+                             f"(more than {100 * max_failed_fraction:g}%)")
+        return out, filled, report
+    from scipy import ndimage
+
+    labels, n = ndimage.label(failed, structure=np.ones((3, 3), dtype=int))
+    sizes = np.bincount(labels.ravel(), minlength=n + 1)
+    large = np.flatnonzero(sizes[1:] > max_fill_cells) + 1
+    report["unfilled_patches"] = sorted((int(sizes[k]) for k in large), reverse=True)
+    todo = failed & ~np.isin(labels, large)
+    Y, Z = np.meshgrid(np.asarray(y, dtype=float), np.asarray(z, dtype=float))
+    spacing = min(float(np.min(np.diff(y))) if len(y) > 1 else 1.0, float(np.min(np.diff(z))) if len(z) > 1 else 1.0)
+    # distance to each neighbour's centre, rounded so mirror-image neighbours tie exactly
+    distance = {(dk, dj): np.round(np.hypot(_shifted(Y, dk, dj, np.nan) - Y, _shifted(Z, dk, dj, np.nan) - Z)
+                                   / spacing, 9) for dk, dj in _NEIGHBOURS}
+    usable = {}
+    for dk, dj in _NEIGHBOURS:
+        ok = ~_shifted(solid, dk, dj, True)
+        if dk and dj:  # no diagonal step between two solid cells
+            ok &= ~(_shifted(solid, dk, 0, True) & _shifted(solid, 0, dj, True))
+        usable[(dk, dj)] = ok
+    while True:
+        remaining = todo & ~filled
+        if not remaining.any():
+            break
+        valid = (out >= 0) & ~solid
+        values = np.unique(out[valid])
+        if not len(values):
+            break
+        counts = np.zeros((len(values),) + code.shape, dtype=np.int16)
+        nearest = np.full((len(values),) + code.shape, np.inf)
+        for offset in _NEIGHBOURS:
+            neighbour = _shifted(out, *offset, -1)
+            ok = usable[offset] & _shifted(valid, *offset, False) & remaining
+            if not ok.any():
+                continue
+            index = np.searchsorted(values, neighbour)
+            index = np.clip(index, 0, len(values) - 1)
+            kk, jj = np.nonzero(ok)
+            ii = index[kk, jj]
+            np.add.at(counts, (ii, kk, jj), 1)
+            nearest[ii, kk, jj] = np.minimum(nearest[ii, kk, jj], distance[offset][kk, jj])
+        most = counts.max(axis=0)
+        now = remaining & (most > 0)
+        if not now.any():
+            break
+        tied = counts == most[None]
+        choice = np.argmin(np.where(tied, nearest, np.inf), axis=0)  # nearest, then the lower code
+        out[now] = values[choice[now]]
+        filled |= now
+        report["rounds"] += 1
+    report["filled"] = int(filled.sum())
+    report["unfilled"] = int(((out < 0) & ~solid).sum())
+    return out, filled, report
+
+
 # --------------------------------------------------------------------------- group maps and composition
 
 

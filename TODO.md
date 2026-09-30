@@ -39,5 +39,5 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [x] Pathlines for a 3D view
 - [x] CFD reference to measure accuracy against (no external data available)
 - [x] Legacy CFD (3D-hydrodynamic-flow-sculpting map library) as a fourth comparison
-- [ ] Grey cells: fill small gaps without valid trajectories
+- [x] Grey cells: fill small gaps without valid trajectories
 - [ ] 3D flow view in the GUI

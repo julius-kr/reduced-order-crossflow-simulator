@@ -145,6 +145,9 @@ class ModelSettings:
     tolerance: float = 1e-12  # preconditioned MINRES tolerance; the true residual is checked separately
     max_coupling_iterations: int = 8
     convergence_check: bool = False
+    # Output cells without a valid trajectory take their neighbours' stream label, in patches of at most
+    # this many 8-connected cells (the largest such patch on the examples is 69 cells; larger ones stay grey).
+    max_fill_cells: int = 100
 
 
 @dataclass
@@ -442,6 +445,8 @@ def validate_config(cfg: ProjectConfig) -> list[Issue]:
         add("error", "operating.diffusion", "Scalar diffusion is not implemented; results would be misleading.")
     if cfg.model.step_fraction <= 0 or cfg.model.step_fraction > 1:
         add("error", "model.step_fraction", "Must be in (0, 1].")
+    if cfg.model.max_fill_cells < 0:
+        add("error", "model.max_fill_cells", "Must be 0 (no filling) or more.")
     if cfg.grid.output_ny < 8:
         add("error", "grid.output_ny", "Output grid needs at least 8 cells across the width.")
     if not 8 <= cfg.cfd.cells <= 64:
