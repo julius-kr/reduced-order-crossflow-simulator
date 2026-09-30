@@ -29,7 +29,7 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [ ] Reference data (CFD/experiment): none in the repo yet, ask for it
 
 ## M5/M6: application
-- [ ] GUI with a side-by-side solver comparison
+- [x] GUI with a side-by-side solver comparison
 - [ ] Packaging (PyInstaller) and smoke test
 - [ ] Validation and performance report
 

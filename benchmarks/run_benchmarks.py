@@ -185,7 +185,7 @@ def scenarios(repeats: int) -> dict:
 
     result, out["port_flow_change_new_ratio_retrace"] = timed(port_change, repeats)
     assert not result.diagnostics["map_reused"]
-    for fidelity in ("medium", "reference"):
+    for fidelity in ("medium", "reference"):  # the app's Accuracy Medium and High
         finer = cfg.copy()
         finer.model.fidelity = fidelity
 

@@ -17,6 +17,7 @@ results/
 benchmarks/results/*.json
 !benchmarks/results/.gitkeep
 docs/review/benchmark_results_rerun.json
+*.autosave.json
 *.nbi
 *.nbc
 

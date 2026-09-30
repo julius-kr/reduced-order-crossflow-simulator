@@ -130,7 +130,7 @@ class GridSpec:
 
 @dataclass
 class ModelSettings:
-    fidelity: Literal["preview", "medium", "reference"] = "preview"
+    fidelity: Literal["preview", "medium", "reference"] = "preview"  # the app's Accuracy: Low / Medium / High
     junction_model: Literal["stokes_map", "ideal_layers"] = "stokes_map"
     pillar_model: Literal["stokes_map"] = "stokes_map"
     viscosity_coupling: Literal["auto", "off", "iterate"] = "auto"

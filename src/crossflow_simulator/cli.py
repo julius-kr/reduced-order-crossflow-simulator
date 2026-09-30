@@ -7,6 +7,7 @@
     crossflow validate-references DIR [--out report.json]
     crossflow legacy-tests
     crossflow verify-snapshot
+    crossflow gui [CONFIG]
 """
 from __future__ import annotations
 
@@ -206,6 +207,12 @@ def cmd_verify_snapshot(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_gui(args: argparse.Namespace) -> int:
+    from .gui.app import main as gui_main
+
+    return gui_main([args.config] if args.config else [])
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="crossflow", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -248,6 +255,9 @@ def build_parser() -> argparse.ArgumentParser:
         func=cmd_legacy_tests)
     sub.add_parser("verify-snapshot", help="check snapshot hashes and migration state").set_defaults(
         func=cmd_verify_snapshot)
+    gui = sub.add_parser("gui", help="start the desktop application")
+    gui.add_argument("config", nargs="?")
+    gui.set_defaults(func=cmd_gui)
     return parser
 
 

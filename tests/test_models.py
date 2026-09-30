@@ -148,6 +148,19 @@ def test_taller_pillars_deform_more():
     assert displacement(100 * UM) > displacement(50 * UM) > 0.0
 
 
+def test_accuracy_presets_refine_the_flow_grid(examples_dir):
+    from crossflow_simulator.config import ProjectConfig
+    from crossflow_simulator.models.domain import FIDELITY_CELLS, flow_cells
+
+    cfg = ProjectConfig.load(examples_dir / "right_triangle_bottom.json")  # W = 2 H
+    cells = []
+    for fidelity in ("preview", "medium", "reference"):
+        cfg.model.fidelity = fidelity
+        cells.append(flow_cells(cfg))
+    assert cells == [(24, 12), (36, 18), (40, 20)] and list(FIDELITY_CELLS.values()) == [12, 18, 20]
+    assert ProjectConfig.from_dict(cfg.to_dict()).model.fidelity == "reference"
+
+
 def test_nearby_pillars_are_grouped_and_distant_ones_compose_accurately():
     near = pillar_config([PillarSpec("a", TRIANGLE, height=90 * UM, x=300 * UM, y=40 * UM),
                           PillarSpec("b", TRIANGLE, height=90 * UM, x=600 * UM, y=140 * UM)])

@@ -19,7 +19,7 @@ from ..config import InletSpec, PillarSpec, ProjectConfig
 from ..solvers.stokes import RectilinearGrid, WallOpening, graded_faces, snap_faces
 from ..transport import OpeningShape
 
-# Flow cells across the smaller channel dimension for each fidelity preset.
+# Flow cells across the smaller channel dimension (the app shows these as Accuracy Low / Medium / High).
 FIDELITY_CELLS = {"preview": 12, "medium": 18, "reference": 20}
 
 
