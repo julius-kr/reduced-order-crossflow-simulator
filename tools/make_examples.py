@@ -3,7 +3,8 @@
 Representative cases from work package A: empty channel, three serial inlets,
 unequal parallel inlets, unequal 2x2 array, off-center bottom-mounted right
 triangle, its reflected and top-mounted variants, and two nearby pillars.
-New-solver-only examples cover a viscosity contrast and pressure-driven flow.
+New-solver-only examples cover a viscosity contrast and pressure-driven flow. Five square-channel
+examples use pillars of the legacy CFD map library, so all four solvers can run them.
 
 Run from the repository root: ``python tools/make_examples.py``.
 """
@@ -129,6 +130,70 @@ def examples() -> dict[str, tuple[ProjectConfig, dict]]:
         ],
         notes="Inlet pressures behind tubing resistances; flow rates come from the hydraulic network."),
         {"shared_capability": False, "family": "driving_conditions"})
+
+    # A pillar entry of the published legacy CFD library (ph 1.125, A-B at y 0-0.75, tip 0.75 downstream at
+    # y 0, in a 1.5 x 1.5 channel), scaled to 200 um per library unit; the mirrored copy is an entry as well.
+    corner = [(0.0, 0.0), (0.0, 150 * UM), (150 * UM, 0.0)]
+    out["square_library_pillars"] = (ProjectConfig(
+        name="Library pillars in a square channel (legacy CFD)",
+        channel=ChannelGeometry(width=300 * UM, height=300 * UM, length=2000 * UM), materials=fluids(3),
+        inlets=[InletSpec(f"in{i + 1}", "ABC"[i], "pattern", flow_rate=r * UL_MIN, pattern_col=i)
+                for i, r in enumerate((0.5, 5.0, 0.5))],
+        pattern=InitialPattern(layout="layers_y"),
+        pillars=[PillarSpec("wall", vertices=corner, height=225 * UM, x=600 * UM, y=0.0),
+                 PillarSpec("mirrored", vertices=corner, height=225 * UM, x=1300 * UM, y=300 * UM, mirror_y=True)],
+        notes="Square channel with a pillar of the legacy CFD map library (three quarters of the height), once at "
+              "each side wall; all four solvers can run it."),
+        {"shared_capability": True, "family": "partial_pillars"})
+
+    # More library entries (all bottom-mounted, at most W long, so the legacy solver runs them as well).
+    square = ChannelGeometry(width=300 * UM, height=300 * UM, length=2000 * UM)
+    side_by_side = [InletSpec(f"in{i + 1}", "ABC"[i], "pattern", flow_rate=2 * UL_MIN, pattern_col=i) for i in range(3)]
+    out["square_centred_pillar"] = (ProjectConfig(
+        name="Centred pillar, three side-by-side layers (legacy CFD)", channel=square, materials=fluids(3),
+        inlets=side_by_side, pattern=InitialPattern(layout="layers_y"),
+        # library entry ph 0.75, A-B at y 0.375-1.125, tip (4.75, 0.75)
+        pillars=[PillarSpec("centre", vertices=[(0.0, 75 * UM), (0.0, 225 * UM), (150 * UM, 150 * UM)],
+                            height=150 * UM, x=700 * UM, y=0.0)],
+        notes="Square channel; a library pillar half the height, pointing downstream in the middle of the channel, "
+              "splits the middle stream. All four solvers can run it."),
+        {"shared_capability": True, "family": "partial_pillars"})
+
+    out["square_full_width_wedge"] = (ProjectConfig(
+        name="Full-width wedge under two stacked layers (legacy CFD)", channel=square, materials=fluids(2),
+        inlets=[InletSpec(f"in{i + 1}", "AB"[i], "pattern", flow_rate=3 * UL_MIN, pattern_row=i) for i in range(2)],
+        pattern=InitialPattern(layout="layers_z"),
+        # library entry ph 0.5, A-B across the whole width, tip (4.75, 0.75)
+        pillars=[PillarSpec("wedge", vertices=[(0.0, 0.0), (0.0, 300 * UM), (150 * UM, 150 * UM)],
+                            height=100 * UM, x=700 * UM, y=0.0)],
+        notes="Square channel; a library pillar a third of the height spans the whole width as a wedge pointing "
+              "downstream, and lifts the lower of two stacked layers. All four solvers can run it."),
+        {"shared_capability": True, "family": "partial_pillars"})
+
+    # library entry ph 0.75, A-B at y 0-0.75, tip (4.75, 0); the mirrored copies are entries as well
+    wall = [(0.0, 0.0), (0.0, 150 * UM), (150 * UM, 0.0)]
+    out["square_pillar_sequence"] = (ProjectConfig(
+        name="Pillar sequence on alternating walls (legacy CFD)",
+        channel=ChannelGeometry(width=300 * UM, height=300 * UM, length=2800 * UM), materials=fluids(3),
+        inlets=side_by_side, pattern=InitialPattern(layout="layers_y"),
+        pillars=[PillarSpec(f"p{k + 1}", vertices=wall, height=150 * UM, x=(500 + 500 * k) * UM,
+                            y=300 * UM if k % 2 else 0.0, mirror_y=bool(k % 2)) for k in range(4)],
+        notes="Square channel; four library pillars, half the height, alternate between the side walls: a "
+              "flow-sculpting sequence. The legacy CFD chains four maps; the CFD reference resolves their "
+              "interaction. All four solvers can run it."),
+        {"shared_capability": True, "family": "partial_pillars"})
+
+    out["square_upstream_pillar_array"] = (ProjectConfig(
+        name="Upstream-pointing pillar, 2x2 inlet array (legacy CFD)", channel=square, materials=fluids(4),
+        inlets=[InletSpec(f"in{k + 1}", "ABCD"[k], "pattern", flow_rate=1.5 * UL_MIN, pattern_row=k // 2,
+                          pattern_col=k % 2) for k in range(4)],
+        pattern=InitialPattern(layout="grid", rows=2, cols=2, partition="auto"),
+        # library entry ph 1.0, A-B at y 0-1.125, tip (3.4375, 0.5625)
+        pillars=[PillarSpec("upstream", vertices=[(0.0, 0.0), (0.0, 225 * UM), (-112.5 * UM, 112.5 * UM)],
+                            height=200 * UM, x=800 * UM, y=0.0)],
+        notes="Square channel; a library pillar two thirds of the height, pointing upstream across three quarters "
+              "of the width, deforms four equal streams from a 2x2 inlet array. All four solvers can run it."),
+        {"shared_capability": True, "family": "partial_pillars"})
     return out
 
 

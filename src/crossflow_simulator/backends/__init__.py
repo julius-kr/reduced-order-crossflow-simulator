@@ -3,6 +3,8 @@
 ``new``     the new implementation in this package (``src/``)
 ``legacy``  the frozen original solver in ``legacy/python`` (never imported here)
 ``cfd``     the full-channel CFD reference (``cfd.py``), in its own worker
+``legacy_cfd`` the vendored 3D-hydrodynamic-flow-sculpting tool (``legacy_cfd.py``; upstream code runs
+            only in its own worker script)
 """
 from __future__ import annotations
 
@@ -22,7 +24,11 @@ def get_backend(name: str) -> Backend:
         from .cfd import CFDBackend
 
         return CFDBackend()
-    raise KeyError(f"Unknown backend {name!r}; expected 'new', 'legacy' or 'cfd'.")
+    if name == "legacy_cfd":
+        from .legacy_cfd import LegacyCFDBackend
+
+        return LegacyCFDBackend()
+    raise KeyError(f"Unknown backend {name!r}; expected 'new', 'legacy', 'cfd' or 'legacy_cfd'.")
 
 
 __all__ = ["Backend", "get_backend"]

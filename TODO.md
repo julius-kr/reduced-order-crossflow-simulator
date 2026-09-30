@@ -38,4 +38,6 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [x] Reuse donor maps when only the inlet pattern changes
 - [x] Pathlines for a 3D view
 - [x] CFD reference to measure accuracy against (no external data available)
-- [ ] Legacy CFD (3D-hydrodynamic-flow-sculpting map library) as a fourth comparison
+- [x] Legacy CFD (3D-hydrodynamic-flow-sculpting map library) as a fourth comparison
+- [ ] Grey cells: fill small gaps without valid trajectories
+- [ ] 3D flow view in the GUI

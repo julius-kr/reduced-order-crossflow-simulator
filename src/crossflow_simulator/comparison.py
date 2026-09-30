@@ -1,4 +1,4 @@
-"""Legacy/new/CFD execution, comparable timings, aligned metrics, accuracy against CFD, and export.
+"""Legacy/new/CFD/legacy-CFD execution, comparable timings, aligned metrics, accuracy against CFD, and export.
 
 Rules implemented here (plan section 11, extended by the CFD reference):
 
@@ -14,6 +14,8 @@ Rules implemented here (plan section 11, extended by the CFD reference):
   fresh legacy solves;
 * legacy labels are regridded onto the new cell-centred grid by nearest
   neighbour *for display and metrics only*; both native results are kept;
+* the legacy CFD (the vendored 3D-hydrodynamic-flow-sculpting map library, ``legacy_cfd.py``) is
+  one more backend measured against the CFD reference; it only covers geometries in its libraries;
 * accuracy is measured only against the CFD reference (``cfd.py``), on its
   grid and with its axial velocity, and is reported together with the CFD's
   own mesh uncertainty. A difference smaller than that uncertainty cannot be
@@ -81,6 +83,7 @@ class ComparisonResult:
     alignment: dict = field(default_factory=dict)
     benchmark: dict | None = None
     accuracy: dict = field(default_factory=dict)  # per backend: agreement with the CFD reference
+    accuracy_vs_legacy_cfd: dict = field(default_factory=dict)  # the new solver against the legacy CFD
     created: float = field(default_factory=time.time)
 
     def is_current(self, cfg: ProjectConfig) -> bool:
@@ -101,6 +104,7 @@ class ComparisonResult:
             "alignment": self.alignment,
             "benchmark": self.benchmark,
             "accuracy_vs_cfd": self.accuracy,
+            "accuracy_vs_legacy_cfd": self.accuracy_vs_legacy_cfd,
             "interpretation": "Agreement with legacy is behavioural, not physical validation. Accuracy is measured "
                               "against the CFD reference within its reported mesh uncertainty; the CFD reference is "
                               "not externally validated.",
@@ -127,7 +131,7 @@ class ComparisonService:
         self.workdir = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="crossflow-compare-"))
         self.workdir.mkdir(parents=True, exist_ok=True)
         self.on_update = on_update
-        self.backends = {name: get_backend(name) for name in ("legacy", "new", "cfd")}
+        self.backends = {name: get_backend(name) for name in ("legacy", "new", "cfd", "legacy_cfd")}
         self.clients: dict[str, WorkerClient] = {}
         self.worker_env = worker_env or {}
         self._startup: dict[str, float] = {}
@@ -201,6 +205,8 @@ class ComparisonService:
         elapsed = time.perf_counter() - t0
         if name == "cfd":
             cache_state = str(result.diagnostics.get("cache", "computed"))
+        elif name == "legacy_cfd":
+            cache_state = f"library {result.diagnostics.get('library_cache') or 'n/a'}"
         else:
             cache_state = "cleared" if clear_cache else ("n/a" if name == "legacy" else "warm-worker")
         run = BackendRun(
@@ -218,7 +224,7 @@ class ComparisonService:
                 timeouts: dict[str, float | None] | None = None, clear_cache: bool = False,
                 recompute_cfd: bool = False) -> ComparisonResult:
         """Run the named backends sequentially (in the given order) on the same case."""
-        timeouts = {"new": 600.0, "legacy": 1800.0, "cfd": 7200.0, **(timeouts or {})}
+        timeouts = {"new": 600.0, "legacy": 1800.0, "cfd": 7200.0, "legacy_cfd": 600.0, **(timeouts or {})}
         comparison_id = uuid.uuid4().hex[:12]
         runs: dict[str, BackendRun] = {}
         for name in names:
@@ -294,11 +300,14 @@ def build_comparison(cfg: ProjectConfig, runs: dict[str, BackendRun], comparison
     comparison.speedup = speedup(runs.get("legacy"), runs.get("new"))
     reference = runs.get("cfd")
     if reference is not None and reference.result is not None and reference.result.ok:
-        for name in ("new", "legacy"):
+        for name in ("new", "legacy", "legacy_cfd"):
             run = runs.get(name)
             if run is not None and run.result is not None and run.result.ok and run.result.final is not None:
                 comparison.accuracy[name] = accuracy_against(reference.result, run.result)
                 comparison.accuracy[name]["speed"] = speed_against_cfd(run, reference)
+    mapped, new = runs.get("legacy_cfd"), runs.get("new")
+    if all(r is not None and r.result is not None and r.result.ok and r.result.final is not None for r in (mapped, new)):
+        comparison.accuracy_vs_legacy_cfd["new"] = accuracy_against(mapped.result, new.result)
     return comparison
 
 
@@ -311,8 +320,17 @@ def cfd_compute_seconds(run: BackendRun) -> float | None:
     return run.solve_seconds
 
 
+def realistic_seconds(run: BackendRun) -> float | None:
+    """A run's time including precomputation it relies on: for the legacy CFD, the COMSOL simulations
+    behind the library maps it applied (estimated from the library's export stamps) plus applying them."""
+    if run.solve_seconds is None:
+        return None
+    comsol = run.result.diagnostics.get("comsol_seconds") if run.backend == "legacy_cfd" and run.result else None
+    return run.solve_seconds + (comsol or 0.0)
+
+
 def speed_against_cfd(run: BackendRun | SimulationResult, reference: BackendRun) -> dict[str, Any]:
-    seconds = run.solve_seconds if isinstance(run, BackendRun) else run.timings.get("total")
+    seconds = realistic_seconds(run) if isinstance(run, BackendRun) else run.timings.get("total")
     cfd_seconds = cfd_compute_seconds(reference)
     if not seconds or not cfd_seconds:
         return {"value": None, "reason": "timings unavailable"}
@@ -482,7 +500,8 @@ def export_comparison(comparison: ComparisonResult, directory: str | Path, lengt
         if run.result is not None:
             run.result.save(out / f"{name}_result.npz")
     panels = []
-    for name, title in (("legacy", "Legacy solver"), ("new", "New solver"), ("cfd", "CFD reference")):
+    for name, title in (("legacy", "Legacy solver"), ("new", "New solver"), ("cfd", "CFD reference"),
+                        ("legacy_cfd", "Legacy CFD (map library)")):
         run = comparison.runs.get(name)
         if run is None:
             continue
@@ -515,7 +534,7 @@ def export_comparison(comparison: ComparisonResult, directory: str | Path, lengt
         "effective_settings.json each backend's effective settings and unsupported features\n"
         f"{names}  native results (crossflow-result/1)\n"
         "differences.npz        legacy labels regridded (nearest) onto the new grid, and the difference mask\n"
-        "side_by_side.png       final sections on physical axes (legacy, new, CFD reference)\n"
+        "side_by_side.png       final sections on physical axes (legacy, new, CFD reference, legacy CFD)\n"
         "comparison.json        statuses, timings, memory, metrics, speedup scope, accuracy against the CFD\n"
         "                       reference, benchmark protocol, versions\n\n"
         "Agreement between the solvers is a behavioural comparison, not physical validation. Accuracy is\n"

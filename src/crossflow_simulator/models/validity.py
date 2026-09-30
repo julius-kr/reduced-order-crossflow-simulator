@@ -81,6 +81,27 @@ MODEL_CARDS: dict[str, dict[str, Any]] = {
         "externally_validated": False,
         "envelope": {"reynolds_max": 50.0, "status": "numerical reference; shares code with the new solver"},
     },
+    "legacy_cfd": {
+        "title": "Legacy CFD (3D-hydrodynamic-flow-sculpting map library)",
+        "description": (
+            "The vendored upstream tool: sections are predicted by chaining index maps that its authors built "
+            "from COMSOL streamlines of individual geometries on a 250 x 250 section grid. The adapter selects "
+            "the library entry for each pillar and runs the unchanged upstream operators in their own worker."
+        ),
+        "assumptions": [
+            "only geometries in the library: triangular pillars in a square channel, library parameter values",
+            "each pillar acts independently (maps chained in streamwise order; no interaction between features)",
+            "maps quantized to the nearest of 250 x 250 section nodes; one fluid, creeping flow",
+            "library pillars top-mounted (measured from the published streamlines); bottom mounts and mirror "
+            "images by exact symmetry",
+        ],
+        "verified_by": [
+            "vendored code checked against the pinned upstream revision (SHA-256 of every file)",
+            "adapter tests with synthetic libraries (identity, shifted, and reflected maps)",
+        ],
+        "externally_validated": False,
+        "envelope": {"status": "upstream library coverage only; COMSOL settings of the libraries are not documented"},
+    },
     "pattern_partition": {
         "title": "Flux-constrained inlet pattern",
         "description": "Patch boundaries of the prescribed inlet pattern carry each inlet's flow rate exactly "

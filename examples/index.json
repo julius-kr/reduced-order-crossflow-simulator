@@ -69,6 +69,41 @@
       "shared_capability": false,
       "family": "driving_conditions",
       "notes": "Inlet pressures behind tubing resistances; flow rates come from the hydraulic network."
+    },
+    {
+      "file": "square_library_pillars.json",
+      "name": "Library pillars in a square channel (legacy CFD)",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Square channel with a pillar of the legacy CFD map library (three quarters of the height), once at each side wall; all four solvers can run it."
+    },
+    {
+      "file": "square_centred_pillar.json",
+      "name": "Centred pillar, three side-by-side layers (legacy CFD)",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Square channel; a library pillar half the height, pointing downstream in the middle of the channel, splits the middle stream. All four solvers can run it."
+    },
+    {
+      "file": "square_full_width_wedge.json",
+      "name": "Full-width wedge under two stacked layers (legacy CFD)",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Square channel; a library pillar a third of the height spans the whole width as a wedge pointing downstream, and lifts the lower of two stacked layers. All four solvers can run it."
+    },
+    {
+      "file": "square_pillar_sequence.json",
+      "name": "Pillar sequence on alternating walls (legacy CFD)",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Square channel; four library pillars, half the height, alternate between the side walls: a flow-sculpting sequence. The legacy CFD chains four maps; the CFD reference resolves their interaction. All four solvers can run it."
+    },
+    {
+      "file": "square_upstream_pillar_array.json",
+      "name": "Upstream-pointing pillar, 2x2 inlet array (legacy CFD)",
+      "shared_capability": true,
+      "family": "partial_pillars",
+      "notes": "Square channel; a library pillar two thirds of the height, pointing upstream across three quarters of the width, deforms four equal streams from a 2x2 inlet array. All four solvers can run it."
     }
   ]
 }

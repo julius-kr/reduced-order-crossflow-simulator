@@ -1,7 +1,7 @@
 """Command-line interface: headless runs, comparison, benchmarks, validation, and maintenance.
 
-    crossflow run CONFIG [--backend new|legacy|cfd] [--inline] [--out result.npz] [--figure fig.png]
-    crossflow compare CONFIG [--cfd] [--no-legacy] [--export DIR] [--benchmark N]
+    crossflow run CONFIG [--backend new|legacy|cfd|legacy_cfd] [--inline] [--out result.npz] [--figure fig.png]
+    crossflow compare CONFIG [--cfd] [--legacy-cfd] [--no-legacy] [--export DIR] [--benchmark N]
     crossflow validate CONFIG
     crossflow sweep CONFIG --set PATH --values V1,V2,... [--csv out.csv]
     crossflow validate-references DIR [--out report.json]
@@ -91,7 +91,8 @@ def cmd_compare(args: argparse.Namespace) -> int:
         if args.benchmark:
             comparison = service.benchmark(cfg, trials=args.benchmark)
         else:
-            names = ("new",) + (() if args.no_legacy else ("legacy",)) + (("cfd",) if args.cfd else ())
+            names = (("new",) + (() if args.no_legacy else ("legacy",)) + (("legacy_cfd",) if args.legacy_cfd else ())
+                     + (("cfd",) if args.cfd else ()))
             comparison = service.run_set(cfg, names, clear_cache=True)
     finally:
         service.close()
@@ -105,6 +106,9 @@ def cmd_compare(args: argparse.Namespace) -> int:
                                                            "max_flux_misassigned", "cfd_uncertainty_m",
                                                            "within_targets", "within_cfd_uncertainty", "speed")}
                                 for k, v in summary["accuracy_vs_cfd"].items()},
+            "accuracy_vs_legacy_cfd": {k: {x: v.get(x) for x in ("station", "min_iou", "max_interface_shift_m",
+                                                                  "max_flux_misassigned", "within_targets")}
+                                       for k, v in summary["accuracy_vs_legacy_cfd"].items()},
             "benchmark": summary["benchmark"]})
     if args.export:
         export_comparison(comparison, args.export, cfg.display.length_unit)
@@ -190,11 +194,15 @@ def cmd_legacy_tests(args: argparse.Namespace) -> int:
 
 def cmd_verify_snapshot(args: argparse.Namespace) -> int:
     from .backends.legacy import legacy_root, verify_snapshot
+    from .legacy_cfd import library_files, verify_upstream
     from .migration import migration_status
 
-    report = {"snapshot": verify_snapshot(), "migration": migration_status(legacy_root().parent)}
+    files = library_files("pillar")
+    report = {"snapshot": verify_snapshot(), "migration": migration_status(legacy_root().parent),
+              "legacy_cfd_upstream": verify_upstream(),
+              "legacy_cfd_pillar_library": {k: str(v) for k, v in files.items()} if files else "not installed"}
     _print(report)
-    ok = report["snapshot"]["ok"] and report["migration"]["ok"]
+    ok = report["snapshot"]["ok"] and report["migration"]["ok"] and report["legacy_cfd_upstream"]["ok"]
     return 0 if ok else 1
 
 
@@ -204,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="run one backend on a project file")
     run.add_argument("config")
-    run.add_argument("--backend", choices=["new", "legacy", "cfd"], default="new")
+    run.add_argument("--backend", choices=["new", "legacy", "cfd", "legacy_cfd"], default="new")
     run.add_argument("--inline", action="store_true", help="run the new solver or the CFD reference in this process")
     run.add_argument("--fidelity", choices=["preview", "medium", "reference"])
     run.add_argument("--cfd-cells", type=int, help="CFD reference grid: cells across the smaller dimension")
@@ -215,6 +223,8 @@ def build_parser() -> argparse.ArgumentParser:
     compare = sub.add_parser("compare", help="run the new solver with legacy and/or the CFD reference")
     compare.add_argument("config")
     compare.add_argument("--cfd", action="store_true", help="also run the CFD reference and report accuracy")
+    compare.add_argument("--legacy-cfd", action="store_true",
+                         help="also run the legacy CFD (vendored 3D-hydrodynamic-flow-sculpting map library)")
     compare.add_argument("--no-legacy", action="store_true", help="skip the legacy solver")
     compare.add_argument("--cfd-cells", type=int, help="CFD reference grid: cells across the smaller dimension")
     compare.add_argument("--export")
