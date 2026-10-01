@@ -1,4 +1,4 @@
-"""Desktop application: one window with setup, geometry, results, and optional comparisons.
+"""Desktop application: one window with setup, geometry, 3D flow, results, and optional comparisons.
 
 The solver never runs on the GUI event loop: the new solver runs in a
 persistent isolated worker (latest job wins), and the comparisons (frozen
@@ -27,6 +27,7 @@ from .panels import SetupPanel
 from .qt import QtCore, QtGui, QtWidgets, QTimer
 from .results_view import ACCURACY, ResultsView
 from .state import ProjectState, autosave_path
+from .view3d import FlowView3D
 
 
 def symbol_icon(kind: str) -> QtGui.QIcon:
@@ -172,7 +173,7 @@ class SequencePanel(QtWidgets.QWidget):
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    """One combined window: setup on the left; geometry and results on the right.
+    """One combined window: setup on the left; geometry, 3D flow and results on the right.
 
     "Compare with legacy solver" adds the legacy result to the left of the new result,
     "Compare with CFD" adds the CFD reference to its right, and "Compare with legacy CFD" adds
@@ -200,15 +201,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setup = SetupPanel(self.state)
         self.sequence = SequencePanel(self.state, self._select_feature)
         self.geometry = GeometryEditor(self.state)
+        self.view3d = FlowView3D(self.state)
         self.results = ResultsView()
         self.results.export_requested.connect(self.export_result)
+        self.results.station_changed.connect(self.view3d.set_station)
+        self.results.visibility_changed.connect(self.view3d.set_hidden)
         self.comparison = ComparisonController(self.state, self.results, self)
         self.comparison.new_run.connect(self._comparison_new_run)
         self.comparison.busy_changed.connect(self._comparison_busy)
+        self.comparison.cfd_changed.connect(self.view3d.set_cfd_result)
         self.results.station_changed.connect(self.comparison.set_station)
         self.results.visibility_changed.connect(lambda _: self._comparing() and self.comparison.redraw())
 
-        top = self.geometry
+        top = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        top.addWidget(self.geometry)
+        top.addWidget(self.view3d)
+        top.setSizes([520, 620])
         self.result_split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self.result_split.addWidget(self.comparison.pane)
         self.result_split.addWidget(self.results)
@@ -413,6 +421,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cfg = self.state.config
         result_figure(self.last_result, colors_for(self.last_result.streams, cfg.display.color_by),
                       cfg.display.length_unit).savefig(out / "sections.png", dpi=200)
+        self.view3d.figure.savefig(out / "flow_3d.png", dpi=200)
         (out / "diagnostics.json").write_text(json.dumps({
             "status": self.last_result.status, "validity": self.last_result.validity,
             "timings": self.last_result.timings, "provenance": self.last_result.provenance,
@@ -511,7 +520,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status("Comparison finished")
 
     def show_result(self, result: SimulationResult) -> None:
-        """Show a new-solver result (never replacing a current one with an outdated one)."""
+        """Show a new-solver result in the results and 3D views (never replacing a current one with an outdated one)."""
         current = self._is_current(result)
         if self.last_result is not None and self._is_current(self.last_result) and not current:
             return
@@ -519,6 +528,7 @@ class MainWindow(QtWidgets.QMainWindow):
         cfg = self.state.config
         self.results.show_result(result, cfg.display.length_unit, cfg.display.color_by)
         self.results.mark_stale(not current)
+        self.view3d.set_result(result, stale=not current)
         self.comparison.set_new_result(result)
 
     def _is_current(self, result: SimulationResult) -> bool:
@@ -552,7 +562,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.redo_action.setEnabled(self.state.can_redo())
         self._show_accuracy()
         if self.last_result is not None:
-            self.results.mark_stale(not self._is_current(self.last_result))
+            stale = not self._is_current(self.last_result)
+            self.results.mark_stale(stale)
+            self.view3d.mark_stale(stale)
         if self.live.isChecked():
             self.live_timer.start(700)  # debounce rapid edits
 
@@ -590,6 +602,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             if answer == QtWidgets.QMessageBox.Save:
                 self.save_project()
+        self.view3d.timer.stop()
         self.runner.shutdown()
         self.comparison.shutdown()
         super().closeEvent(event)

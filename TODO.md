@@ -40,4 +40,4 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 - [x] CFD reference to measure accuracy against (no external data available)
 - [x] Legacy CFD (3D-hydrodynamic-flow-sculpting map library) as a fourth comparison
 - [x] Grey cells: fill small gaps without valid trajectories
-- [ ] 3D flow view in the GUI
+- [x] 3D flow view in the GUI

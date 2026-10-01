@@ -30,6 +30,7 @@ def window(app, examples_dir, tmp_path, monkeypatch):
     w.live_timer.stop()
     w.show()
     yield w
+    w.view3d.timer.stop()
     w.runner.shutdown()
     w.comparison.shutdown()
     w.state.dirty = False
@@ -209,7 +210,7 @@ def test_one_window_without_tabs_and_optional_comparison_panes(app, window):
 
     controller = window.comparison
     assert not window.findChildren(QtWidgets.QTabWidget)
-    for widget in (window.setup, window.geometry, window.results, window.sequence):
+    for widget in (window.setup, window.geometry, window.view3d, window.results, window.sequence):
         assert widget.isVisibleTo(window)
     assert not any(w.isVisibleTo(window) for w in (controller.pane, controller.cfd_pane, controller.legacy_cfd_pane,
                                                    controller.strip))
@@ -256,10 +257,39 @@ def test_compare_mode_explains_cases_legacy_cannot_run(app, window, examples_dir
     assert "Not supported by legacy CFD" in window.comparison.legacy_cfd_pane.status.text()
 
 
+def test_3d_view_animates_the_computed_flow_and_hides_it_when_stale(app, window, examples_dir):
+    window.state.replace(ProjectConfig.load(examples_dir / "right_triangle_bottom.json"), None)
+    view = window.view3d
+    assert not view.flow_shown and "run a calculation" in view.message
+    window.run()
+    assert wait(app, lambda: window.last_result is not None and view.flow_shown, 120)
+    cfg = window.state.config
+    before = view.particle_positions()
+    view.advance(0.5)
+    after = view.particle_positions()
+    assert len(before) > 100 and not np.allclose(before, after)
+    # cells without a valid trajectory were filled from their neighbours, and the results view says how many
+    tree = window.results.diagnostics
+    trajectories = next(tree.topLevelItem(i) for i in range(tree.topLevelItemCount())
+                        if tree.topLevelItem(i).text(0) == "Trajectories (final)")
+    rows = {trajectories.child(i).text(0): trajectories.child(i).text(1) for i in range(trajectories.childCount())}
+    filled = int(window.last_result.final.filled.sum())
+    assert filled > 0 and rows["Filled from neighbours"] == f"{filled} ({100 * filled / 12800:.3g} %)"
+    assert np.all((after[:, 1] >= -1e-9) & (after[:, 1] <= cfg.channel.width + 1e-9))
+    assert np.all((after[:, 2] >= -1e-9) & (after[:, 2] <= cfg.channel.height + 1e-9))
+    window.results.slider.setValue(0)  # the selected station is shown in 3D
+    assert view.station == 0
+    window.state.apply(lambda c: setattr(c.pillars[0], "x", c.pillars[0].x + 50e-6))
+    app.processEvents()
+    assert not view.flow_shown and len(view.particle_positions()) == 0
+    assert "Inputs changed" in view.message
+
+
 def test_auto_update_runs_a_preview_after_an_edit(app, window):
     window.live.setChecked(True)
     window.state.apply(lambda c: setattr(c.inlets[0], "flow_rate", c.inlets[0].flow_rate * 1.5))
     assert wait(app, lambda: window.last_result is not None and window._is_current(window.last_result), 120)
+    assert window.view3d.flow_shown
 
 
 @pytest.mark.legacy
@@ -282,7 +312,7 @@ def test_compare_with_legacy_runs_both_and_shows_performance(app, window, tmp_pa
     assert (out / "side_by_side.png").exists()
 
 
-def test_compare_with_cfd_shows_the_reference_accuracy(app, window, examples_dir):
+def test_compare_with_cfd_shows_the_reference_accuracy_and_3d_flow(app, window, examples_dir):
     cfg = ProjectConfig.load(examples_dir / "right_triangle_bottom.json")
     cfg.cfd.cells = 12
     cfg.grid.output_ny = 64
@@ -309,6 +339,11 @@ def test_compare_with_cfd_shows_the_reference_accuracy(app, window, examples_dir
     assert window.results.reference[0] == "CFD reference" and window.results.slider.value() == 0
     diagnostics = window.results.diagnostics
     assert "Difference" in [diagnostics.topLevelItem(i).text(0) for i in range(diagnostics.topLevelItemCount())]
+    # the 3D view can animate the CFD flow
+    view = window.view3d
+    assert view.flow_source.isVisibleTo(window)
+    view.flow_source.setCurrentIndex(view.flow_source.findData("cfd"))
+    assert view.flow_shown and "CFD reference" in view.message
     # Recompute discards the stored CFD result and computes it again, measuring its compute time now
     assert controller.cfd_pane.recompute_button.isEnabled()
     controller.cfd_pane.recompute_button.click()
@@ -320,7 +355,7 @@ def test_compare_with_cfd_shows_the_reference_accuracy(app, window, examples_dir
     controller.cfd_pane.grid_chosen.emit(16)
     app.processEvents()
     assert window.state.config.cfd.cells == 16 and not window.results.stale
-    assert "STALE" in controller.cfd_pane.status.text()
+    assert "STALE" in controller.cfd_pane.status.text() and not view.flow_shown
 
 
 @pytest.mark.legacy
