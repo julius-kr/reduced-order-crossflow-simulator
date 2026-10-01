@@ -103,7 +103,6 @@ benchmarks/        run_benchmarks.py, legacy baseline capture
 reference_data/    analytical fixtures and the legacy behaviour baseline
 examples/          project files and presets
 packaging/         PyInstaller spec, frozen entry point, packaged smoke test
-cpp/               reserved for a compiled kernel if a future performance gate requires it
 docs/              review record, architecture, validation and performance report
 ```
 
