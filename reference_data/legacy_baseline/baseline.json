@@ -6,9 +6,9 @@
       "name": "legacy",
       "version": "0.1.0+d69ab5f",
       "source_revision": "d69ab5fbcc71103fc770d4ad8818476fc7cf35e2",
-      "package_path": "C:\\Users\\Julius\\VisualStudioProjects\\reduced-order-crossflow-simulator\\legacy\\python\\src\\crossflow_simulator",
+      "package_path": "legacy/python/src/crossflow_simulator",
       "python": "3.13.12",
-      "executable": "C:\\Users\\Julius\\VisualStudioProjects\\reduced-order-crossflow-simulator\\.venv\\Scripts\\python.exe",
+      "executable": ".venv/Scripts/python.exe",
       "numpy": "2.5.3"
     },
     "platform": "Windows-11-10.0.22631-SP0",

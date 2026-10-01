@@ -29,6 +29,19 @@ from crossflow_simulator.geometry import stable_hash  # noqa: E402
 TARGET = ROOT / "reference_data" / "legacy_baseline"
 
 
+def portable(identity: dict) -> dict:
+    """The worker identity with local paths made relative to the repository (file name only outside it)."""
+    out = dict(identity)
+    for key in ("package_path", "executable"):
+        if key in out:
+            path = Path(out[key])
+            try:
+                out[key] = path.resolve().relative_to(ROOT).as_posix()
+            except ValueError:
+                out[key] = path.name
+    return out
+
+
 def main() -> int:
     TARGET.mkdir(parents=True, exist_ok=True)
     index = json.loads((ROOT / "examples" / "index.json").read_text(encoding="utf-8"))["examples"]
@@ -71,7 +84,7 @@ def main() -> int:
         "schema": "crossflow-legacy-baseline/1",
         "note": "Legacy behaviour, not truth. Timings are single runs on the recording machine.",
         "recorded_with": {
-            "legacy_identity": hello["identity"],
+            "legacy_identity": portable(hello["identity"]),
             "platform": platform.platform(),
             "processor": platform.processor(),
         },
