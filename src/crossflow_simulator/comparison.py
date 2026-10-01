@@ -1,6 +1,6 @@
 """Legacy/new/CFD/legacy-CFD execution, comparable timings, aligned metrics, accuracy against CFD, and export.
 
-Rules implemented here (plan section 11, extended by the CFD reference):
+Rules implemented here:
 
 * both backends receive the same physical case (same input hash) through
   explicit adapters; each shows its effective settings, and cases the legacy

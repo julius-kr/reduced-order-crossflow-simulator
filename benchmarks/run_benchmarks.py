@@ -1,4 +1,4 @@
-"""Repeatable benchmarks of both backends (plan section 4 and work package B5).
+"""Repeatable benchmarks of both backends against the performance budgets.
 
 Sections
     kernels     legacy kernels (isolated interpreter) versus new kernels on the *same* discrete

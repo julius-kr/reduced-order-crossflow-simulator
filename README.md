@@ -11,10 +11,6 @@ the vendored [3D-hydrodynamic-flow-sculpting](https://github.com/yiyingzou/3D-hy
 tool. It chains index maps precomputed from COMSOL streamlines, and it is measured against the same
 CFD reference.
 
-Status: implementation of `docs/implementation_plan.md`. Measured performance is in
-[docs/validation_and_performance.md](docs/validation_and_performance.md); the validation part of that
-report and an architecture overview are being written.
-
 ## Install (Windows, Python 3.11+)
 
 ```powershell
@@ -108,7 +104,7 @@ reference_data/    analytical fixtures and the legacy behaviour baseline
 examples/          project files and presets
 packaging/         PyInstaller spec, frozen entry point, packaged smoke test
 cpp/               reserved for a compiled kernel if a future performance gate requires it
-docs/              implementation plan, review record, performance report
+docs/              review record, architecture, validation and performance report
 ```
 
 ## Tests and benchmarks

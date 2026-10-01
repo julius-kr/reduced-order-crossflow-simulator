@@ -39,7 +39,7 @@ def region(result, codes):
     return np.isin(result.final.codes, list(codes))
 
 
-# ----------------------------------------------------------------------------- serial inlet (work package D)
+# ----------------------------------------------------------------------------- serial inlet
 
 def test_junction_adds_the_port_flow():
     cfg = junction_config([(150 * UM, 150 * UM)], rates=[3.0])
@@ -94,7 +94,7 @@ def test_junction_reflection_equivariance():
     assert metrics.iou(left.final.codes, mirrored, 2) > 0.95
 
 
-# ----------------------------------------------------------------------------- partial pillars (work package E)
+# ----------------------------------------------------------------------------- partial pillars
 
 def pillar_config(pillars, swap_layers=False, grid=None):
     cfg = make_config(pillars=pillars, grid=grid or GridSpec(output_ny=96))

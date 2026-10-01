@@ -36,7 +36,7 @@ from .results import Section, SimulationResult
 
 SCHEMA = "crossflow-reference/1"
 EXTERNAL_KINDS = {"cfd", "experiment"}
-# Initial acceptance targets from the implementation plan (section 12); to be refined with reference uncertainty.
+# Initial acceptance targets; to be refined with reference uncertainty.
 TARGETS = {
     "interface_distance_fraction_of_height": 0.02,
     "iou_min": 0.90,

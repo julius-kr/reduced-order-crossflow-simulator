@@ -1,6 +1,6 @@
 """Optional compiled streamline kernel (Numba).
 
-This is the narrow compiled kernel allowed by the plan's performance gate:
+This narrow compiled kernel was added after a missed performance budget:
 profiling showed the per-step Python overhead of the vectorized tracer
 dominating multi-group runs. The kernel implements exactly the algorithm of
 :func:`crossflow_simulator.transport.trace` for the adaptive midpoint

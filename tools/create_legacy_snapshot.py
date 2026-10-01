@@ -1,6 +1,6 @@
 """Create the frozen ``legacy/python/`` snapshot and ``legacy/manifest.json``.
 
-This is a one-time provenance tool (work package A, step 2). Files are
+This is a one-time provenance tool. Files are
 written byte-for-byte from git blobs at a fixed revision, so the archive does
 not depend on working-tree line-ending conversion. Transient build artefacts
 (bytecode caches and setuptools egg-info) are excluded from the executable

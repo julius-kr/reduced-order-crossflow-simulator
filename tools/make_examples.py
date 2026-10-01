@@ -1,6 +1,6 @@
 """Generate the representative example projects in ``examples/``.
 
-Representative cases from work package A: empty channel, three serial inlets,
+Representative cases: empty channel, three serial inlets,
 unequal parallel inlets, unequal 2x2 array, off-center bottom-mounted right
 triangle, its reflected and top-mounted variants, and two nearby pillars.
 New-solver-only examples cover a viscosity contrast and pressure-driven flow. Five square-channel
