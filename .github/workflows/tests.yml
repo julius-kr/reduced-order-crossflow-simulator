@@ -22,7 +22,6 @@ jobs:
           python -m pip install --no-deps -e .
       - name: Legacy snapshot and migration
         run: python -m crossflow_simulator verify-snapshot
-        continue-on-error: true  # fails until the original python/ tree is removed (M0)
       - name: Original tests against the frozen snapshot
         run: python -m crossflow_simulator legacy-tests
       - name: Test suite

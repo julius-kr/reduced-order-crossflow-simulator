@@ -170,7 +170,7 @@ def test_square_library_example_uses_a_library_entry(tmp_path, monkeypatch):
         ("wall", key, True, False), ("mirrored", key, True, True)]
 
 
-PUBLISHED = ROOT / legacy_cfd.UPSTREAM_FOLDER  # published libraries and streamlines, when the user installed them
+PUBLISHED = ROOT / legacy_cfd.UPSTREAM_FOLDER  # published libraries and streamlines, when installed
 
 
 # The library entries (ph, ya, yb, xc, yc; channel 1.5 x 1.5) of the examples the legacy CFD runs, per pillar in

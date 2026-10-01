@@ -1,11 +1,11 @@
-"""Planning-only experiments; no production solver code is changed.
+"""Benchmarks of the original solver, recorded before the rewrite; no solver code is changed.
 
 Run from the repository root with an environment containing NumPy, SciPy,
 and pytest: python -I docs/review/benchmark_review.py [--output PATH]
-The sparse prototype deliberately reproduces the existing discrete equations,
-including their missing physical grid spacing; it is not the proposed final PDE.
+The sparse prototype deliberately reproduces the original discrete equations,
+including their missing physical grid spacing; it is not the new solver's PDE.
 
-Source selection: after the M0 migration this harness measures the frozen
+Source selection: after the layout migration this harness measures the frozen
 snapshot in legacy/python/src (originally the top-level python tree at d69ab5f).
 benchmark_results.json is the historical record and is never overwritten;
 reruns write to --output (default: benchmark_results_rerun.json).

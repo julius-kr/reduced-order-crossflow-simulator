@@ -6,7 +6,7 @@ Checks: both executables exist; the bundled snapshot and the vendored legacy CFD
 legacy worker runs the original operators; a shipped shared-capability preset runs through all four
 isolated backends (new, legacy, legacy CFD, and a small CFD reference); the report exports with the
 accuracy against the CFD; when the pillar map library is bundled, the legacy CFD runs the square library
-example with it. Run it on a machine without the development environment for the release gate.
+example with it. Before a release, run it on a machine without the development environment.
 """
 from __future__ import annotations
 

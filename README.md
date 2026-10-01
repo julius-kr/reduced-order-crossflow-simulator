@@ -103,7 +103,7 @@ benchmarks/        run_benchmarks.py, legacy baseline capture
 reference_data/    analytical fixtures and the legacy behaviour baseline
 examples/          project files and presets
 packaging/         PyInstaller spec, frozen entry point, packaged smoke test
-docs/              review record, architecture, validation and performance report
+docs/              original-solver benchmark (review/), architecture, validation and performance report
 ```
 
 ## Tests and benchmarks

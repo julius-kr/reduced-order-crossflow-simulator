@@ -1,9 +1,9 @@
-"""Checks for the M0 layout migration.
+"""Checks for the layout migration.
 
 After the legacy snapshot was verified, the original top-level ``python/``
 tree must disappear and nothing executable may still point at it. The
-historical audit record (the recorded review JSON) may mention the old path
-and is excluded explicitly.
+recorded benchmark of the original solver (``docs/review/benchmark_results.json``)
+may mention the old path and is excluded explicitly.
 """
 from __future__ import annotations
 
