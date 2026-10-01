@@ -4,16 +4,16 @@ Predicts material cross-sections in low-Reynolds-number microfluidic flow sculpt
 parallel inlets, prescribed inlet arrays, and asymmetric partial-height pillars. The new solver
 computes a 3D Stokes flow field for each interacting group of features and transports material
 along continuous streamlines. Legacy is the frozen original heuristic solver. It is kept unchanged
-and runs next to the new solver in its own isolated worker process. The CFD reference solves the
+and runs next to the new solver in a dedicated comparison view. The CFD reference solves the
 whole channel in one 3D Navier–Stokes computation, without the new solver's reduced-order
 assumptions. It serves as the ground truth that both solvers are measured against. The legacy CFD is
 the vendored [3D-hydrodynamic-flow-sculpting](https://github.com/yiyingzou/3D-hydrodynamic-flow-sculpting)
 tool. It chains index maps precomputed from COMSOL streamlines, and it is measured against the same
 CFD reference.
 
-Status: implementation of `docs/implementation_plan.md` in progress. The solvers, the paired comparison,
-and both CFD references work from the command line; the desktop application is next. Measured
-performance is in [docs/validation_and_performance.md](docs/validation_and_performance.md).
+Status: implementation of `docs/implementation_plan.md`. Measured performance is in
+[docs/validation_and_performance.md](docs/validation_and_performance.md); the validation part of that
+report and an architecture overview are being written.
 
 ## Install (Windows, Python 3.11+)
 
@@ -36,6 +36,7 @@ is found. It is loaded with a restricted unpickler that accepts NumPy arrays onl
 ## Use
 
 ```powershell
+crossflow-gui                                   # desktop application (or: python -m crossflow_simulator gui)
 crossflow run examples/right_triangle_bottom.json --figure sections.png
 crossflow run examples/right_triangle_bottom.json --backend legacy
 crossflow run examples/right_triangle_bottom.json --backend cfd --cfd-cells 24   # CFD reference
@@ -50,8 +51,25 @@ crossflow verify-snapshot                        # legacy hashes and migration s
 crossflow legacy-tests                           # the six original tests against the frozen snapshot
 ```
 
+The desktop application is one window. The left column holds the setup and the operation
+sequence; the right side shows the geometry editor, an animated 3D flow view, and the results.
+"Add pillar" in the setup offers a right triangle or a non-isosceles trapezoid; any other polygon
+can be typed as footprint vertices.
+▶ Run in the menu bar or the toolbar (F5) runs the simulation with one click: the new solver, then
+every comparison that is on. Accuracy next to it (also in the Solver menu) sets the new solver's
+flow grid: Low (the default, about 1–2 s on the examples), Medium (typically 2.4x Low's time; within
+the CFD targets on every example) or High (typically 3.5x). It is saved with the project. Every edit also runs the new solver automatically (Auto-update, in the
+Solver menu and the toolbar). The comparisons are in the Compare menu and the toolbar. "Compare
+with legacy solver" adds the legacy result to the left of the new one. "Compare with CFD" adds the CFD
+reference to its right, with its mesh uncertainty and all its statistics. "Compare with legacy CFD"
+adds the map-library result at the far right. Any combination can be on, up to all four side by
+side. A strip below them shows every solver's performance and each one's accuracy against the CFD.
+"Compare new with" in that strip chooses which CFD the new solver is measured against (the CFD
+reference or the legacy CFD), or turns that comparison off. Under the new result, "Difference to
+CFD" or "Difference to legacy CFD" marks the cells where it differs from that result at the
+selected station; each is available while its comparison is on.
 The CFD takes 50–90 s on its standard grid (about 11 minutes with a viscosity contrast). Results
-are stored, so running a computed case again loads its CFD immediately.
+are stored, so switching back to a computed case shows its CFD immediately.
 
 Project files are versioned JSON with SI numbers under unit-suffixed keys (`width_m`,
 `flow_rate_m3_s`). Strings such as `"300 um"` or `"2 uL/min"` are accepted on input. The
@@ -74,18 +92,21 @@ src/crossflow_simulator/
   models/          domain.py (feature groups), stokes_map.py (flows, caching, viscosity coupling), validity.py
   transport.py     continuous streamline integration (transport_kernel.py: optional compiled kernel)
   maps.py          chained donor maps, composition, conservative remap, sub-cell fractions
-  pathlines.py     forward pathlines (display only)
+  pathlines.py     forward pathlines for the 3D view (display only)
   simulator.py     simulate(config, progress, cancel) — the application service
   cfd.py           run_cfd(config, ...) — full-channel Navier-Stokes CFD reference, mesh uncertainty, cache
   legacy_cfd.py    translation of projects to the legacy CFD's library entries (or the reasons why not)
   backends/        isolated new, legacy, CFD, and legacy CFD workers, protocol, legacy adapter
   comparison.py    legacy/new/CFD/legacy-CFD runs, metrics, accuracy against the CFD, benchmark protocol, export
   calibration.py   reference-data contract, holdout, envelopes
+  gui/             PySide6 application: one window with a 3D flow view and optional legacy, CFD, and legacy CFD
+                   comparisons
   cli.py           command line
-tests/             new-solver, comparison, and legacy-isolation tests
+tests/             new-solver, comparison, legacy-isolation, and GUI tests
 benchmarks/        run_benchmarks.py, legacy baseline capture
 reference_data/    analytical fixtures and the legacy behaviour baseline
 examples/          project files and presets
+packaging/         PyInstaller spec, frozen entry point, packaged smoke test
 cpp/               reserved for a compiled kernel if a future performance gate requires it
 docs/              implementation plan, review record, performance report
 ```
@@ -93,11 +114,24 @@ docs/              implementation plan, review record, performance report
 ## Tests and benchmarks
 
 ```powershell
-python -m pytest -q                       # full suite
-python -m pytest -q -m "not legacy"
+python -m pytest -q                       # full suite (GUI tests run offscreen)
+python -m pytest -q -m "not legacy and not gui"
 python benchmarks/run_benchmarks.py --trials 3
 python benchmarks/capture_legacy_baseline.py   # re-record legacy behaviour fixtures
 ```
+
+## Packaged application
+
+```powershell
+pyinstaller --noconfirm packaging/crossflow.spec     # dist/crossflow/{crossflow-gui.exe, crossflow.exe}
+python packaging/smoke_test.py dist/crossflow        # snapshot, both backends, paired export
+```
+
+The bundle contains the verified legacy snapshot, the legacy worker, the legacy CFD code and worker
+(with the compressed pillar map library when it is installed in the source tree), and the example
+presets, so the comparison view works without a source
+checkout. The bundle then includes GPL-3.0 code (3D-hydrodynamic-flow-sculpting), and distributing
+it carries that licence's obligations.
 
 ## Known open items
 
@@ -113,3 +147,6 @@ python benchmarks/capture_legacy_baseline.py   # re-record legacy behaviour fixt
   because the upstream inlet library's parameters have no documented reference frame. Its maps do
   not conserve flux: each pillar moves about 0.75 pp of each wall-side stream into the middle
   stream (see the validation report).
+* Low accuracy misses one CFD target on three square-channel pillar examples; Medium meets them
+  on all examples. The error does not shrink steadily with the flow grid on square channels,
+  so High is not closer than Medium everywhere (see the validation report).

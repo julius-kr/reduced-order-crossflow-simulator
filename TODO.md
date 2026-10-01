@@ -30,7 +30,7 @@ Working list for the rewrite. The plan and its acceptance gates are in `docs/imp
 
 ## M5/M6: application
 - [x] GUI with a side-by-side solver comparison
-- [ ] Packaging (PyInstaller) and smoke test
+- [x] Packaging (PyInstaller) and smoke test
 - [ ] Validation and performance report
 
 ## Follow-ups

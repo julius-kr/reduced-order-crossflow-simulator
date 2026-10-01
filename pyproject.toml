@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crossflow-simulator"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reduced-order simulator for material cross-sections in low-Reynolds-number microfluidic flow sculpting"
 readme = "README.md"
 requires-python = ">=3.11"
