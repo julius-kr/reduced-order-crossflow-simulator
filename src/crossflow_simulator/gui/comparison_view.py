@@ -21,17 +21,18 @@ import numpy as np
 from .. import cfd, legacy_cfd, metrics
 from ..comparison import (
     BackendRun, ComparisonResult, accuracy_against, build_comparison, cfd_compute_seconds,
-    export_comparison, realistic_seconds, speed_against_cfd,
+    backend_end_to_end_seconds, export_comparison, speed_against_cfd,
 )
 from ..config import ProjectConfig
 from ..materials import colors_for
-from ..plotter import stream_labels
+from ..plotter import result_figure, stream_labels
 from ..results import SimulationResult
 from ..units import UNITS, format_quantity
 from .bridge import ComparisonRunner
 from .canvas import SectionCanvas
 from .results_view import ResultsView
-from .qt import NavigationToolbar2QT, QtCore, QtGui, QtWidgets, Signal
+from .runtime_view import RuntimeChart
+from .qt import QtCore, QtGui, QtWidgets, Signal
 from .state import ProjectState
 
 GOOD, BAD, WARN, INFO = "#1B5E20", "#B00020", "#8A6D00", "#0D47A1"
@@ -42,13 +43,6 @@ def _fmt_seconds(value) -> str:
     return "—" if value is None else (f"{value * 1000:.0f} ms" if value < 1 else f"{value:.2f} s")
 
 
-def _fmt_duration(value) -> str:
-    """Seconds as ms, s, min or h (for times that range from milliseconds to days)."""
-    if value is None:
-        return "—"
-    if value < 120:
-        return _fmt_seconds(value)
-    return f"{value / 60:.1f} min" if value < 7200 else f"{value / 3600:.1f} h"
 
 
 def _fmt_length(value: float | None, unit: str) -> str:
@@ -58,12 +52,15 @@ def _fmt_length(value: float | None, unit: str) -> str:
 
 
 class BackendPane(QtWidgets.QGroupBox):
-    """One comparison result: status line, section canvas, and a tree of measurements (resizable split)."""
+    """One comparison result: status line, section canvas, and export button."""
 
     show_station_x = False  # legacy sections have no streamwise position
 
     def __init__(self, title: str, parent=None):
         super().__init__(title, parent)
+        self.result: SimulationResult | None = None
+        self.length_unit = "um"
+        self.color_by = "material"
         self.layout_ = QtWidgets.QVBoxLayout(self)
         self.layout_.setContentsMargins(4, 4, 4, 4)
         self.status = QtWidgets.QLabel("Not run")
@@ -74,63 +71,53 @@ class BackendPane(QtWidgets.QGroupBox):
         plot_layout.setContentsMargins(0, 0, 0, 0)
         self.canvas = SectionCanvas(plot)
         self.canvas.setMinimumSize(200, 150)
-        self.toolbar = NavigationToolbar2QT(self.canvas, plot)
-        plot_layout.addWidget(self.toolbar)
         plot_layout.addWidget(self.canvas, 1)
-        self.performance = QtWidgets.QTreeWidget()
-        self.performance.setHeaderLabels(["Measurement", "Value"])
-        self.performance.setColumnWidth(0, 190)
-        self.performance.setMinimumHeight(60)
-        self.split = QtWidgets.QSplitter(QtCore.Qt.Vertical)
-        self.split.addWidget(plot)
-        self.split.addWidget(self.performance)
-        self.split.setStretchFactor(0, 3)
-        self.split.setStretchFactor(1, 1)
-        self.split.setChildrenCollapsible(False)
-        self.layout_.addWidget(self.split, 1)
+        exports = QtWidgets.QHBoxLayout()
+        self.export_button = QtWidgets.QPushButton("Export...")
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_result)
+        exports.addWidget(self.export_button)
+        exports.addStretch(1)
+        plot_layout.addLayout(exports)
+        self.layout_.addWidget(plot, 1)
 
     def set_status(self, text: str, color: str = "black") -> None:
         self.status.setText(text)
         self.status.setStyleSheet(f"color: {color}")
 
-    def _add(self, parent, key, value="", color: str | None = None) -> QtWidgets.QTreeWidgetItem:
-        item = QtWidgets.QTreeWidgetItem([str(key), str(value)])
-        (parent.addChild(item) if parent is not None else self.performance.addTopLevelItem(item))
-        if color:
-            item.setForeground(1, QtGui.QColor(color))
-        return item
+    def export_result(self) -> None:
+        """Export this backend's native result, project snapshot, figure, and diagnostics."""
+        result = self.result
+        if result is None or not result.ok or result.final is None:
+            return
+        directory = QtWidgets.QFileDialog.getExistingDirectory(self, "Export result")
+        if not directory:
+            return
+        out = Path(directory)
+        result.save(out / "result.npz")
+        ProjectConfig.from_dict(result.config).save(out / "config.json")
+        from matplotlib import pyplot as plt
 
-    def fill_tree(self, run: BackendRun) -> None:
-        add = self._add
-        add(None, "Status", run.status)
-        add(None, "Solve time (in worker)", _fmt_seconds(run.solve_seconds))
-        add(None, "End-to-end backend time", _fmt_seconds(run.end_to_end_seconds))
-        add(None, "Worker startup (separate)", _fmt_seconds(run.startup_seconds))
-        add(None, "Cache state", run.cache_state)
-        peak = run.memory.get("peak_bytes") if run.memory else None
-        add(None, "Peak worker memory", "unavailable" if not peak else f"{peak / 2**20:.0f} MiB ({run.memory['method']})")
-        if run.result is not None and run.result.timings:
-            stages = add(None, "Stage timings", "")
-            for k, v in run.result.timings.items():
-                add(stages, k, _fmt_seconds(v))
-        settings = add(None, "Effective settings", "")
-        for k, v in run.effective_settings.items():
-            add(settings, k, json.dumps(v) if not isinstance(v, str) else v)
-        if run.result is not None:
-            diag = add(None, "Diagnostics", "")
-            d = run.result.diagnostics
-            for key in ("max_flux_fraction_error", "reynolds_number", "unmatched_labels", "pressure_solver_messages",
-                        "unavailable"):
-                if key in d:
-                    add(diag, key, json.dumps(d[key]) if not isinstance(d[key], float) else f"{d[key]:.4g}")
-            for w in run.result.warnings:
-                add(diag, "warning", w)
+        figure = result_figure(result, colors_for(result.streams, self.color_by), self.length_unit)
+        try:
+            figure.savefig(out / "sections.png", dpi=200)
+        finally:
+            plt.close(figure)
+        (out / "diagnostics.json").write_text(json.dumps({
+            "status": result.status, "message": result.message, "diagnostics": result.diagnostics,
+            "validity": result.validity, "timings": result.timings, "provenance": result.provenance,
+            "solver": result.solver, "warnings": result.warnings,
+        }, indent=2, default=str), encoding="utf-8")
+
+
 
     def show_run(self, run: BackendRun, length_unit: str, color_by: str, limits, reference=None,
                  stale: bool = False, station: int | None = None, hidden: set[int] | None = None) -> None:
-        self.performance.clear()
-        self.fill_tree(run)
-        self.performance.expandToDepth(0)
+        self.result = run.result
+        self.length_unit = length_unit
+        self.color_by = color_by
+        self.export_button.setEnabled(run.status == "success" and run.result is not None
+                                      and run.result.ok and run.result.final is not None)
         if run.status == "unsupported":
             self.set_status(run.message, WARN)
             self.canvas.clear_message("Not supported\n\n" + "\n".join(run.unsupported))
@@ -154,7 +141,7 @@ class BackendPane(QtWidgets.QGroupBox):
 
 
 class CFDPane(BackendPane):
-    """The CFD reference: grid choice, own run button and progress, and every CFD statistic."""
+    """The CFD reference: grid choice, own run button, progress, plot, and export."""
 
     grid_chosen = Signal(int)
     run_requested = Signal()
@@ -162,8 +149,8 @@ class CFDPane(BackendPane):
     show_station_x = True
 
     def __init__(self, parent=None):
-        super().__init__("CFD reference (full-channel 3D Navier-Stokes)", parent)
-        bar = QtWidgets.QHBoxLayout()
+        super().__init__("CFD reference", parent)
+        bar = QtWidgets.QGridLayout()
         self.grid = QtWidgets.QComboBox()
         for cells, label in PRESET_LABELS.items():
             self.grid.addItem(label, cells)
@@ -183,10 +170,12 @@ class CFDPane(BackendPane):
         self.progress.setRange(0, 100)
         self.progress.setMaximumWidth(120)
         self.progress.setVisible(False)
-        for widget in (QtWidgets.QLabel("Grid"), self.grid, self.run_button, self.recompute_button, self.progress,
-                       self.estimate):
-            bar.addWidget(widget)
-        bar.addStretch(1)
+        bar.addWidget(QtWidgets.QLabel("Grid"), 0, 0)
+        bar.addWidget(self.grid, 0, 1)
+        bar.addWidget(self.run_button, 1, 0)
+        bar.addWidget(self.recompute_button, 1, 1)
+        bar.addWidget(self.estimate, 2, 0, 1, 2)
+        bar.addWidget(self.progress, 3, 0, 1, 2)
         self.layout_.insertLayout(0, bar)
 
     def set_grid(self, cells: int, seconds: float) -> None:
@@ -202,145 +191,16 @@ class CFDPane(BackendPane):
         if fraction is not None:
             self.progress.setValue(int(100 * fraction))
 
-    def fill_tree(self, run: BackendRun) -> None:
-        add = self._add
-        result = run.result
-        add(None, "Status", run.status, GOOD if run.status == "success" else BAD)
-        computed = cfd_compute_seconds(run)
-        add(None, "CFD compute time", _fmt_seconds(computed))
-        add(None, "This run", f"{_fmt_seconds(run.solve_seconds)} ({run.cache_state})")
-        peak = run.memory.get("peak_bytes") if run.memory else None
-        add(None, "Peak worker memory", "unavailable" if not peak else f"{peak / 2**20:.0f} MiB")
-        if result is None or not result.ok:
-            if result is not None and result.diagnostics.get("traceback"):
-                add(None, "Traceback", result.diagnostics["traceback"][-400:])
-            return
-        info = result.diagnostics.get("cfd") or {}
-        H = float(result.config["channel"]["height_m"])
-        unit = result.config.get("display", {}).get("length_unit", "um")
-        mesh = info.get("mesh_convergence")
-        if mesh:
-            ok = mesh["uncertainty_m"] <= cfd.TARGET_FRACTION_OF_H * H
-            item = add(None, "Mesh uncertainty (final)", f"{_fmt_length(mesh['uncertainty_m'], unit)} "
-                       f"({100 * mesh['uncertainty_fraction_of_H']:.2f}% of H)", GOOD if ok else WARN)
-            add(item, "grids compared", f"{mesh['cells'][0]} vs {mesh['cells'][1]} cells across")
-            add(item, "interface shift between grids", _fmt_length(mesh["interface_shift_m"], unit))
-            add(item, "min IoU between grids", f"{mesh['min_iou']:.4f}")
-            add(item, "estimate", mesh["method"])
-            for station in mesh["stations"]:
-                add(item, station["station"], f"shift {_fmt_length(station['interface_shift_m'], unit)}, "
-                                              f"uncertainty {_fmt_length(station['uncertainty_m'], unit)}")
-        else:
-            add(None, "Mesh uncertainty", "not estimated (convergence check off)", WARN)
-        checks = add(None, "Numerical checks", result.validity.get("status", ""))
-        for check in result.validity.get("checks", []):
-            add(checks, check["check"], ("ok  " if check["ok"] else "FAIL  ") + check["detail"],
-                GOOD if check["ok"] else BAD)
-        add(None, "Reynolds number", f"{result.diagnostics.get('reynolds_number', float('nan')):.3g}")
-        for level in info.get("levels", []):
-            label = "reference grid" if level is info["levels"][0] else "convergence grid"
-            nx, ny, nz = level["grid"]
-            item = add(None, f"{label}: {level['cells_across']} cells", f"{nx} x {ny} x {nz} = {level['cells']:,} "
-                       f"cells, {level['unknowns']:,} unknowns")
-            stokes = level.get("stokes") or {}
-            add(item, "Stokes solve", f"{stokes.get('method')}, {stokes.get('iterations')} iterations, residual "
-                                      f"{stokes.get('relative_residual', float('nan')):.1e}")
-            picard = level.get("picard")
-            if picard:
-                add(item, "inertia (Picard)", f"{picard['iterations']} steps, converged {picard['converged']}, "
-                                              f"velocity change {100 * picard['inertia_effect']:.3g}%")
-            coupling = level.get("coupling")
-            if coupling:
-                add(item, "viscosity coupling", f"{len(coupling['iterations'])} iterations, converged "
-                                                f"{coupling['converged']}")
-            add(item, "continuity (worst plane)", f"{level['mass_balance']['relative_error']:.1e} of the flow")
-            add(item, "pressure drop (x = 0 to outlet)", format_quantity(level.get("pressure_drop_Pa"), "mbar",
-                                                                          "pressure"))
-            add(item, "field", f"{level.get('field_cache')}, {_fmt_seconds(level.get('seconds'))}")
-        final = result.final
-        flux = add(None, "Flux fractions (final, CFD velocity)", "")
-        expected = final.diagnostics.get("expected_flux_m3_s", {})
-        total = sum(expected.values()) or 1.0
-        for code, value in final.diagnostics.get("flux_fraction", {}).items():
-            add(flux, f"code {code}", f"{100 * value:.2f}% (inlet {100 * expected.get(code, 0.0) / total:.2f}%)")
-        if result.timings:
-            stages = add(None, "Stage timings", "")
-            for k, v in result.timings.items():
-                add(stages, k, _fmt_seconds(v))
-        settings = add(None, "Effective settings", "")
-        for k, v in run.effective_settings.items():
-            add(settings, k, json.dumps(v) if not isinstance(v, str) else v)
-        for w in result.warnings:
-            add(None, "warning", w, WARN)
 
 
 class LegacyCFDPane(BackendPane):
-    """The legacy CFD: the upstream map library, which entries were used, and the adapter's conventions."""
+    """The legacy CFD result and export."""
 
     show_station_x = True
 
     def __init__(self, parent=None):
-        super().__init__("Legacy CFD (3D-hydrodynamic-flow-sculpting map library)", parent)
+        super().__init__("Legacy CFD", parent)
 
-    def fill_tree(self, run: BackendRun) -> None:
-        add = self._add
-        result = run.result
-        add(None, "Status", run.status, GOOD if run.status == "success" else (WARN if run.status == "unsupported"
-                                                                              else BAD))
-        if run.result is not None and run.result.ok:
-            maps = len(run.result.diagnostics.get("operation_log", []))
-            total = add(None, "Time including COMSOL (estimated)", _legacy_cfd_time(run))
-            add(total, "COMSOL simulations", f"{maps} x {legacy_cfd.COMSOL_PILLAR['seconds_per_map'] / 60:.2f} min"
-                                             f" = {_fmt_duration(legacy_cfd.comsol_seconds(maps))}")
-            add(total, "basis", f"{legacy_cfd.COMSOL_PILLAR['basis']} ({legacy_cfd.COMSOL_PILLAR['maps']} files, "
-                                f"{legacy_cfd.COMSOL_PILLAR['first_export']} to "
-                                f"{legacy_cfd.COMSOL_PILLAR['last_export']})")
-            add(total, "whole pillar library", _fmt_duration(legacy_cfd.comsol_seconds(
-                legacy_cfd.COMSOL_PILLAR["maps"])))
-        add(None, "Map application (in worker)", _fmt_seconds(run.solve_seconds))
-        add(None, "End-to-end backend time", _fmt_seconds(run.end_to_end_seconds))
-        add(None, "Worker startup (separate)", _fmt_seconds(run.startup_seconds))
-        add(None, "Map library", run.cache_state)
-        peak = run.memory.get("peak_bytes") if run.memory else None
-        add(None, "Peak worker memory", "unavailable" if not peak else f"{peak / 2**20:.0f} MiB")
-        upstream = legacy_cfd.UPSTREAM
-        item = add(None, "Upstream tool", f"{upstream['name']} @ {upstream['revision'][:7]}")
-        add(item, "source", upstream["url"])
-        add(item, "license", upstream["license"])
-        add(item, "libraries", upstream["libraries_url"])
-        if result is not None and result.ok:
-            d = result.diagnostics
-            library = d.get("library")
-            if library:
-                entry = add(None, "Library file", Path(library["file"]).name)
-                add(entry, "entries", str(library["entries"]))
-                add(entry, "size", f"{library['bytes'] / 2**20:.0f} MiB")
-                add(entry, "sha256", library["sha256"][:16] + "...")
-                add(entry, "load time", _fmt_seconds(library["load_seconds"]))
-            log = d.get("operation_log", [])
-            maps = add(None, "Library maps applied", str(len(log)))
-            for op in log:
-                flags = [n for n, on in (("z-reflected", op["flip_z"]), ("y-reflected", op["mirror_y"])) if on]
-                note = f" ({', '.join(flags)})" if flags else ""
-                add(maps, op["pillar"], f"{op['key']}{note}; changed {100 * op['changed_fraction']:.1f}% of the section")
-            final = result.final
-            flux = add(None, "Flux fractions (final, duct profile)", "")
-            expected = final.diagnostics.get("expected_flux_m3_s", {})
-            total = sum(expected.values()) or 1.0
-            for code, value in final.diagnostics.get("flux_fraction", {}).items():
-                if int(code) >= 0:
-                    add(flux, f"code {code}", f"{100 * value:.2f}% (inlet {100 * expected.get(code, 0.0) / total:.2f}%)")
-            if result.timings:
-                stages = add(None, "Stage timings", "")
-                for k, v in result.timings.items():
-                    add(stages, k, _fmt_seconds(v))
-            for w in result.warnings:
-                add(None, "warning", w, WARN)
-        elif result is not None and result.diagnostics.get("traceback"):
-            add(None, "Traceback", result.diagnostics["traceback"][-400:])
-        settings = add(None, "Effective settings", "")
-        for k, v in run.effective_settings.items():
-            add(settings, k, json.dumps(v) if not isinstance(v, str) else v)
 
 
 PERFORMANCE_ROWS = ("Status", "Solve time (in worker)", "End-to-end backend time", "Worker startup (separate)",
@@ -349,28 +209,18 @@ COLUMNS = (("legacy", "Legacy"), ("new", "New"), ("cfd", "CFD"), ("legacy_cfd", 
 REFERENCES = {"cfd": "CFD", "legacy_cfd": "legacy CFD"}  # what the new solver can be measured against
 
 
-def _legacy_cfd_time(run: BackendRun) -> str:
-    """The legacy CFD's realistic time: the COMSOL simulations behind its maps plus applying them."""
-    comsol = run.result.diagnostics.get("comsol_seconds") if run.result is not None else None
-    if comsol is None:
-        return _fmt_seconds(run.solve_seconds)
-    if not comsol:
-        return f"{_fmt_seconds(run.solve_seconds)} (no COMSOL map used)"
-    return f"~{_fmt_duration(realistic_seconds(run))} (COMSOL maps; applied in {_fmt_seconds(run.solve_seconds)})"
 
 
 def _performance_values(name: str, run: BackendRun | None, reference: BackendRun | None) -> list[str]:
     if run is None:
         return ["—"] * len(PERFORMANCE_ROWS)
     peak = run.memory.get("peak_bytes") if run.memory else None
-    solve = _fmt_seconds(run.solve_seconds)
+    # Legacy CFD applies stored maps; the worker's duration is not the original
+    # CFD solve time, which is unavailable in the vendored result data.
+    solve = _fmt_seconds(None if name == "legacy_cfd" else
+                         cfd_compute_seconds(run) if name == "cfd" else run.solve_seconds)
     speed = "—"
-    if name == "legacy_cfd":
-        solve = _legacy_cfd_time(run)
     if name == "cfd":
-        computed = cfd_compute_seconds(run)
-        if computed and run.solve_seconds is not None and computed > 2 * run.solve_seconds:
-            solve = f"{solve} (computed in {_fmt_seconds(computed)})"
         speed = "reference"
     elif run.cache_state == "map reused":
         speed = "n/a (map reused)"  # a cached lookup is not compared with a computed reference
@@ -378,7 +228,7 @@ def _performance_values(name: str, run: BackendRun | None, reference: BackendRun
         value = speed_against_cfd(run, reference).get("value")
         if value:
             speed = f"{value:.0f}x faster" if value >= 1 else f"{1 / value:.1f}x slower"
-    return [run.status, solve, _fmt_seconds(run.end_to_end_seconds), _fmt_seconds(run.startup_seconds),
+    return [run.status, solve, _fmt_seconds(backend_end_to_end_seconds(run)), _fmt_seconds(run.startup_seconds),
             run.cache_state, "unavailable" if not peak else f"{peak / 2**20:.0f} MiB", speed]
 
 
@@ -388,6 +238,7 @@ class ComparisonController(QtCore.QObject):
     new_run = Signal(object)  # BackendRun of the new solver from a comparison run
     busy_changed = Signal(bool)
     cfd_changed = Signal(object, bool)  # CFD result (or None) and whether it is stale
+    message = Signal(str)
 
     def __init__(self, state: ProjectState, results: ResultsView, parent=None):
         super().__init__(parent)
@@ -407,7 +258,8 @@ class ComparisonController(QtCore.QObject):
         self._syncing = False
         self._accuracy: dict[str, dict] = {}
         self._difference_key: tuple | None = None
-        self.pane = BackendPane("Legacy solver (frozen snapshot)")
+        self.runtime_chart = RuntimeChart()
+        self.pane = BackendPane("Legacy solver")
         self.cfd_pane = CFDPane()
         self.cfd_pane.grid_chosen.connect(self._grid_chosen)
         self.cfd_pane.run_requested.connect(lambda: self.run(self.state.config, ("cfd",)))
@@ -429,7 +281,7 @@ class ComparisonController(QtCore.QObject):
         self.export_button.clicked.connect(self.export)
         self.compare_new = QtWidgets.QCheckBox("Compare new with")
         self.compare_new.setChecked(True)
-        self.compare_new.setToolTip("Measure the new solver against a CFD result in the agreement table and summary")
+        self.compare_new.setToolTip("Measure the new solver against a CFD result in the agreement table")
         self.compare_new.toggled.connect(self._reference_changed)
         self.reference = QtWidgets.QComboBox()
         self.reference.setToolTip("The CFD the new solver is measured against: the CFD reference (full-channel 3D "
@@ -460,18 +312,37 @@ class ComparisonController(QtCore.QObject):
         tables.addWidget(self.performance, 2)
         tables.addWidget(self.metrics, 4)
         layout.addLayout(tables)
-        self.summary = QtWidgets.QLabel()
-        self.summary.setWordWrap(True)
-        self.summary.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        layout.addWidget(self.summary)
         canvases = [self.pane.canvas, self.results.canvas, self.cfd_pane.canvas, self.legacy_cfd_pane.canvas]
+        self.canvases = canvases
         for source in canvases:
             source.limit_listeners.append(lambda s=source: self._sync(s, canvases))
+            source.size_listeners.append(lambda: QtCore.QTimer.singleShot(0, self._size_plots))
         self.results.difference_changed.connect(lambda _: self._apply_difference())
         state.changed.connect(self._state_changed)
         self._state_changed()
 
     # ------------------------------------------------------------------ helpers
+    def _size_plots(self) -> None:
+        visible = [canvas for canvas in self.canvases if canvas.isVisible()]
+        if not visible:
+            return
+        # Controls above the canvases can have different heights. Fit each plot in
+        # their shared vertical interval so z=0 lines up in window coordinates.
+        tops = [c.mapToGlobal(QtCore.QPoint(0, 0)).y() for c in visible]
+        shared_top = max(tops) + 40
+        shared_bottom = min(top + c.height() for top, c in zip(tops, visible)) - 50
+        width = max(20.0, min(c.width() for c in visible) - 150)
+        available_height = max(20.0, shared_bottom - shared_top)
+        y0, y1, z0, z1 = self.limits()
+        ratio = (y1 - y0) / max(z1 - z0, 1e-30)
+        width = min(width, available_height * ratio)
+        height = width / ratio
+        baseline = (shared_top + shared_bottom + height) / 2
+        for canvas, top in zip(visible, tops):
+            scale = canvas.figure.bbox.height / max(canvas.height(), 1)
+            canvas.set_plot_size(width * scale, height * scale,
+                                 (top + canvas.height() - baseline) * scale)
+
     def limits(self) -> tuple[float, float, float, float]:
         cfg = self.state.config
         scale = 1.0 / UNITS["length"][cfg.display.length_unit]
@@ -597,6 +468,8 @@ class ComparisonController(QtCore.QObject):
         from ..backends.cfd import CFDBackend
 
         self.runs["cfd"] = BackendRun("cfd", result.status, result.message, cache_state=result.diagnostics["cache"],
+                                      solve_seconds=result.diagnostics.get("computed_seconds", result.timings.get("total")),
+                                      end_to_end_seconds=result.diagnostics.get("computed_backend_seconds"),
                                       effective_settings=CFDBackend().effective_settings(self.state.config),
                                       result=result)
         return True
@@ -651,7 +524,7 @@ class ComparisonController(QtCore.QObject):
         self.runs.pop("legacy", None)
         self.legacy_comparison = None
         self.pane.set_status("Benchmark running (sequential, alternating order)...", "#555555")
-        self.summary.setText("Benchmark running...")
+        self.message.emit("Benchmark running...")
         self._set_busy(True)
         self.runner.benchmark(cfg, self.trials.value())
 
@@ -683,7 +556,7 @@ class ComparisonController(QtCore.QObject):
         if directory:
             out = export_comparison(comparison, Path(directory) / f"comparison_{comparison.comparison_id}",
                                     self.state.config.display.length_unit)
-            self.summary.setText(f"Exported to {out}")
+            self.message.emit(f"Exported to {out}")
 
     def shutdown(self) -> None:
         self.runner.shutdown()
@@ -693,6 +566,8 @@ class ComparisonController(QtCore.QObject):
         self.new_result = result
         if any(self.enabled.values()):
             self.redraw()
+        else:
+            self.fill_performance()
 
     def set_station(self, index: int | None) -> None:
         self.station = index
@@ -728,7 +603,7 @@ class ComparisonController(QtCore.QObject):
 
     def _error(self, message: str) -> None:
         self._set_busy(False)
-        self.summary.setText(f"Comparison failed: {message}")
+        self.message.emit(f"Comparison failed: {message}")
 
     def _state_changed(self) -> None:
         if self.enabled["cfd"] and not self.busy:
@@ -764,7 +639,7 @@ class ComparisonController(QtCore.QObject):
         self.fill_performance()
         self.fill_metrics()
         self._apply_difference()
-        self._fill_summary()
+        QtCore.QTimer.singleShot(0, self._size_plots)
 
     def fill_performance(self) -> None:
         reference = self.runs.get("cfd")
@@ -772,7 +647,26 @@ class ComparisonController(QtCore.QObject):
                 "legacy_cfd": self.runs.get("legacy_cfd")}
         for col, (name, _) in enumerate(COLUMNS):
             for row, value in enumerate(_performance_values(name, runs[name], reference)):
-                self.performance.setItem(row, col, QtWidgets.QTableWidgetItem(value))
+                item = QtWidgets.QTableWidgetItem(value)
+                if name == "legacy_cfd" and row == 1:
+                    item.setToolTip("Original CFD solve time unavailable: this solver applies precomputed maps.")
+                self.performance.setItem(row, col, item)
+        stale = {"new": self._new_stale(), "legacy": self._legacy_stale(),
+                 "cfd": self._cfd_stale(), "legacy_cfd": self._legacy_cfd_stale()}
+        records = []
+        for name, label in (("new", "New solver"), ("legacy", "Legacy solver"),
+                            ("cfd", "CFD reference")):
+            if name != "new" and not self.enabled[name]:
+                continue
+            run = runs[name]
+            seconds = None
+            status = "not run" if run is None else run.status
+            if run is not None and run.status == "success":
+                seconds = cfd_compute_seconds(run) if name == "cfd" else run.solve_seconds
+                if stale[name]:
+                    status = "stale"
+            records.append((name, label, seconds, status))
+        self.runtime_chart.show_runtimes(records)
 
     def accuracy(self) -> dict[str, dict]:
         """Accuracy of new against the chosen CFD, and of legacy and legacy CFD against the CFD reference.
@@ -850,70 +744,6 @@ class ComparisonController(QtCore.QObject):
                     item.setForeground(QtGui.QColor(color))
                 self.metrics.setItem(row, col, item)
 
-    def _fill_summary(self) -> None:
-        cfg = self.state.config
-        unit = cfg.display.length_unit
-        parts = []
-        comparison = self.legacy_comparison
-        if self.enabled["legacy"] and comparison is not None:
-            speed = comparison.speedup
-            if speed.get("value"):
-                parts.append(f"Speedup legacy/new = {speed['value']:.1f}x ({speed['scope']}; legacy "
-                             f"{_fmt_seconds(speed['legacy_seconds'])}, new {_fmt_seconds(speed['new_seconds'])}).")
-            elif "legacy" in comparison.runs:
-                parts.append(f"No legacy/new speedup: {speed.get('reason', 'n/a')}.")
-            if comparison.benchmark:
-                stats = comparison.benchmark["statistics"]
-                items = [f"{name} {scope}: median {_fmt_seconds(s['median'])} (n={s['n']}, IQR {_fmt_seconds(s['iqr'])})"
-                         for name, scopes in stats.items() for scope, s in scopes.items()]
-                parts.append("Benchmark: " + "; ".join(items))
-        reference = self.runs.get("cfd")
-        if self.enabled["cfd"] and reference is not None and reference.result is not None and reference.result.ok:
-            result = reference.result
-            mesh = (result.diagnostics.get("cfd") or {}).get("mesh_convergence")
-            text = f"CFD reference computed in {_fmt_seconds(cfd_compute_seconds(reference))}"
-            if mesh:
-                text += (f"; its own mesh uncertainty is {_fmt_length(mesh['uncertainty_m'], unit)} "
-                         f"({100 * mesh['uncertainty_fraction_of_H']:.2g}% of H, {mesh['cells'][0]} vs "
-                         f"{mesh['cells'][1]} cells)")
-            parts.append(text + ".")
-            if self._cfd_stale():
-                parts.insert(0, "STALE: the CFD reference belongs to other inputs; Run (F5) or Run CFD updates it.")
-        elif self.enabled["cfd"]:
-            parts.append("CFD reference not computed for these inputs yet (Run or Run CFD).")
-        choice = self.new_reference()
-        if choice == "legacy_cfd" and "new" not in self._accuracy:
-            mapped = self.runs.get("legacy_cfd")
-            parts.append("Legacy CFD cannot run this case (see its pane)." if mapped and mapped.status == "unsupported"
-                         else "Legacy CFD not run for these inputs yet (Run, F5).")
-        elif choice == "legacy_cfd" and self._legacy_cfd_stale():
-            parts.insert(0, "STALE: the legacy CFD result belongs to other inputs; Run (F5) updates it.")
-        for name, label in (("new", "New solver"), ("legacy", "Legacy"), ("legacy_cfd", "Legacy CFD")):
-            entry = self._accuracy.get(name)
-            if entry is None or (name != "new" and not self.enabled[name]):
-                continue
-            against = REFERENCES[entry.get("reference", "cfd")]
-            verdict = "within the targets" if entry["within_targets"] else "outside the targets"
-            if entry["within_cfd_uncertainty"] and entry["cfd_uncertainty_m"] > 0:
-                verdict += " and within the CFD's own uncertainty"
-            parts.append(f"{label} vs {against} at {entry['station']}: interface shift up to "
-                         f"{_fmt_length(entry['max_interface_shift_m'], unit)}, IoU >= {entry['min_iou']:.3f}, "
-                         f"flux misassigned <= {100 * entry['max_flux_misassigned']:.2f} pp: {verdict}.")
-        notes = []
-        if choice == "legacy_cfd":
-            notes.append("the legacy CFD has no mesh-uncertainty estimate (its maps are quantized to 250 x 250 "
-                         "nodes), so the plain targets apply")
-        if self.enabled["legacy"]:
-            notes.append("agreement with legacy is behavioural, not validation")
-        if self.enabled["cfd"]:
-            notes.append("the CFD reference solves the whole channel without the new solver's reduced-order "
-                         "assumptions; it is verified numerically but not externally validated")
-        if self.enabled["legacy_cfd"]:
-            notes.append("legacy CFD chains precomputed COMSOL streamline maps and covers only geometries in its "
-                         "libraries")
-        if comparison is not None and not comparison.is_current(cfg) and self.enabled["legacy"]:
-            parts.insert(0, "STALE: the project changed after this comparison; run again to update it.")
-        self.summary.setText(" ".join(parts) + ("\nNote: " + "; ".join(notes) + "." if notes else ""))
 
     def _apply_difference(self) -> None:
         """Hand the results view the codes of the result its difference box asks for (CFD or legacy CFD)."""

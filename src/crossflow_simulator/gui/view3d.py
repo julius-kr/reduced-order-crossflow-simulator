@@ -16,14 +16,16 @@ from __future__ import annotations
 import numpy as np
 from matplotlib.colors import to_rgba
 from matplotlib.ticker import MaxNLocator
+from matplotlib.transforms import Bbox
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
+from mpl_toolkits.mplot3d import proj3d
 
 from ..config import ProjectConfig
 from ..materials import INVALID_COLOR, colors_for, stream_table
 from ..models.domain import channel_extent
 from ..results import Section, SimulationResult
 from ..units import UNITS
-from .qt import FigureCanvasQTAgg, Figure, QtCore, QtWidgets, QTimer
+from .qt import FigureCanvasQTAgg, Figure, QtCore, QtWidgets, QTimer, Signal
 from .state import ProjectState
 
 FRAME_MS = 40
@@ -84,6 +86,8 @@ class ParticleTracks:
 class FlowView3D(QtWidgets.QWidget):
     """Interactive 3D view of the channel with the animated flow of the latest result."""
 
+    station_changed = Signal(int)
+
     def __init__(self, state: ProjectState, parent=None):
         super().__init__(parent)
         self.state = state
@@ -130,6 +134,20 @@ class FlowView3D(QtWidgets.QWidget):
             bar.addWidget(widget)
         bar.addStretch(1)
         layout.addLayout(bar)
+        station_controls = QtWidgets.QHBoxLayout()
+        station_controls.addWidget(QtWidgets.QLabel("Cross-section"))
+        self.station_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.station_slider.setRange(0, 0)
+        self.station_slider.setSingleStep(1)
+        self.station_slider.setPageStep(1)
+        self.station_slider.setTracking(True)
+        self.station_slider.setEnabled(False)
+        self.station_slider.setToolTip("Select a calculated section; updates the 3D slice and matching result plots.")
+        self.station_slider.valueChanged.connect(self.set_station)
+        station_controls.addWidget(self.station_slider, 1)
+        self.station_label = QtWidgets.QLabel("Run to calculate sections")
+        station_controls.addWidget(self.station_label)
+        layout.addLayout(station_controls)
         self.figure = Figure(figsize=(5, 3))
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.setMinimumSize(320, 220)
@@ -180,6 +198,7 @@ class FlowView3D(QtWidgets.QWidget):
                 self.tracks = ParticleTracks(result)
         self.result = result
         self.stale = stale
+        self._update_station_control()
         self.rebuild()
 
     def mark_stale(self, stale: bool) -> None:
@@ -189,12 +208,35 @@ class FlowView3D(QtWidgets.QWidget):
             self.sources["new"] = (result, stale)
             if self.source == "new":
                 self.stale = stale
+                self._update_station_control()
                 self.rebuild()
 
     def set_station(self, index: int | None) -> None:
+        if self.result is not None and self.result.sections and index is not None:
+            index = max(0, min(index, len(self.result.sections) - 1))
         if index != self.station:
             self.station = index
+            self._update_station_control()
             self.rebuild()
+            if index is not None:
+                self.station_changed.emit(index)
+
+    def _update_station_control(self) -> None:
+        sections = self.result.sections if self.result is not None and self.result.ok else []
+        last = max(len(sections) - 1, 0)
+        index = last if self.station is None else min(max(self.station, 0), last)
+        self.station_slider.blockSignals(True)
+        self.station_slider.setMaximum(last)
+        self.station_slider.setValue(index)
+        self.station_slider.setEnabled(len(sections) > 1 and not self.stale)
+        self.station_slider.blockSignals(False)
+        if sections:
+            section = sections[index]
+            unit = self.state.config.display.length_unit
+            self.station_label.setText(f"{index + 1}/{len(sections)}: {section.name}, "
+                                       f"x = {section.x / UNITS['length'][unit]:.4g} {unit}")
+        else:
+            self.station_label.setText("Run to calculate sections")
 
     def set_hidden(self, hidden: set[int]) -> None:
         self.hidden = set(hidden)
@@ -264,6 +306,11 @@ class FlowView3D(QtWidgets.QWidget):
         if self.flow_shown and self.streamlines.isChecked():
             self._draw_streamlines(s, colors)
         self.scatter = ax.scatter([], [], [], s=7, depthshade=False, animated=True, linewidths=0)
+        # The wide channel can project past the square Axes3D patch. Clipping
+        # against that patch cuts off the outlet corner; the projected-scene
+        # layout below keeps these artists inside the canvas instead.
+        for collection in ax.collections:
+            collection.set_clip_on(False)
         if self.flow_shown:
             self.particle_colors = np.array([to_rgba(colors.get(int(c), INVALID_COLOR)) for c in
                                              self.tracks.code[self.tracks.line]])
@@ -413,8 +460,67 @@ class FlowView3D(QtWidgets.QWidget):
         self._draw_particles(blit=True)
 
     def _on_draw(self, event) -> None:
+        if self._fit_projected_scene(event.renderer):
+            self.background = None
+            QTimer.singleShot(0, self.canvas.draw_idle)
+            return
         self.background = self.canvas.copy_from_bbox(self.figure.bbox)
         self._draw_particles(blit=False)
+
+    def _scene_bounds(self, renderer) -> Bbox:
+        """Bounds of the projected channel and labels, excluding the oversized 3D axes patch."""
+        ax = self.ax
+        x0, x1 = ax.get_xlim()
+        y0, y1 = ax.get_ylim()
+        z0, z1 = ax.get_zlim()
+        # Include inlet/outlet arrows, which extend beyond the channel ends.
+        corners = np.array([[x, y, z] for x in (x0 - 0.12 * (x1 - x0), x1 + 0.1 * (x1 - x0))
+                            for y in (y0, y1) for z in (z0, z1)])
+        matrix = ax.get_proj()
+        px, py, _ = proj3d.proj_transform(*corners.T, matrix)
+        points = ax.transData.transform(np.column_stack((px, py)))
+        bounds = [Bbox.from_extents(*points.min(axis=0), *points.max(axis=0))]
+        for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+            box = axis.get_tightbbox(renderer)
+            if box is not None:
+                bounds.append(box)
+        # Text3D restores its world coordinates after drawing, so measure text
+        # at its projected location instead of calling its 2D bounding-box API.
+        for text in ax.texts:
+            if not text.get_visible():
+                continue
+            x, y, z = text.get_position_3d()
+            px, py, _ = proj3d.proj_transform(x, y, z, matrix)
+            px, py = ax.transData.transform((px, py))
+            width, height, descent = renderer.get_text_width_height_descent(
+                text.get_text(), text.get_fontproperties(), ismath=False)
+            offset_x = {"left": 0, "center": width / 2, "right": width}[text.get_ha()]
+            offset_y = {"bottom": 0, "center": height / 2, "top": height,
+                        "baseline": descent, "center_baseline": height / 2}[text.get_va()]
+            bounds.append(Bbox.from_bounds(px - offset_x, py - offset_y, width, height))
+        return Bbox.union(bounds)
+
+    def _fit_projected_scene(self, renderer) -> bool:
+        """Keep channel corners and axis labels inside the canvas at any panel aspect ratio."""
+        bounds = self._scene_bounds(renderer)
+        width, height = self.figure.bbox.size
+        viewport = Bbox.from_extents(16, 30, width - 16, height - 12)
+        if viewport.width <= 0 or viewport.height <= 0:
+            return False
+        if (bounds.x0 >= viewport.x0 - 0.5 and bounds.x1 <= viewport.x1 + 0.5
+                and bounds.y0 >= viewport.y0 - 0.5 and bounds.y1 <= viewport.y1 + 0.5):
+            return False
+        scale = min(1.0, viewport.width / max(bounds.width, 1), viewport.height / max(bounds.height, 1))
+        # Leave a little slack for tick labels, whose font size stays constant.
+        scale *= 0.98
+        position = self.ax.get_position()
+        origin = np.array((position.x0 * width, position.y0 * height))
+        center = np.array(((bounds.x0 + bounds.x1) / 2, (bounds.y0 + bounds.y1) / 2))
+        target = np.array(((viewport.x0 + viewport.x1) / 2, (viewport.y0 + viewport.y1) / 2))
+        origin = target + scale * (origin - center)
+        self.ax.set_position((origin[0] / width, origin[1] / height,
+                              position.width * scale, position.height * scale))
+        return True
 
     def _draw_particles(self, blit: bool) -> None:
         if self.scatter is None:

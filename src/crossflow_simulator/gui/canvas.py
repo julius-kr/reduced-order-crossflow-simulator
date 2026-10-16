@@ -22,6 +22,7 @@ class SectionCanvas(FigureCanvasQTAgg):
         # Called after the user zooms or pans (for synchronized views); Axes.clear() drops the
         # Matplotlib callbacks, so they are reconnected after every redraw.
         self.limit_listeners: list = []
+        self.size_listeners: list = []
         self.setMinimumSize(280, 180)
         self.clear_message("No result yet")
 
@@ -98,6 +99,23 @@ class SectionCanvas(FigureCanvasQTAgg):
     def _limits_changed(self, _axes) -> None:
         for listener in list(self.limit_listeners):
             listener()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        for listener in getattr(self, "size_listeners", []):
+            listener()
+
+    def set_plot_size(self, width: float, height: float, bottom: float | None = None) -> None:
+        """Use a shared image size and an optional baseline in canvas pixels."""
+        self.figure.set_layout_engine(None)
+        fw, fh = self.figure.bbox.width, self.figure.bbox.height
+        if fw <= 0 or fh <= 0:
+            return
+        bottom = (fh - height) / 2 if bottom is None else bottom
+        position = [55 / fw, bottom / fh, width / fw, height / fh]
+        if not np.allclose(self.axes.get_position().bounds, position, atol=1e-6):
+            self.axes.set_position(position)
+            self.draw_idle()
 
 
 class GeometryCanvas(FigureCanvasQTAgg):

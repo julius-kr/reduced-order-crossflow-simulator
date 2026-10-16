@@ -203,6 +203,14 @@ class ComparisonService:
             return BackendRun(name, "failed", str(exc), job_id=job_id, effective_settings=effective)
         result = backend.load_result(message, cfg)
         elapsed = time.perf_counter() - t0
+        if name == "cfd" and result.ok and not str(result.diagnostics.get("cache", "")).startswith("disk cache"):
+            # The parent measures submission through loading the result; persist this with the computation,
+            # so a later disk lookup cannot replace it with the lookup's much shorter duration.
+            from . import cfd
+            from .cache import disk_cache
+
+            result.diagnostics["computed_backend_seconds"] = elapsed
+            disk_cache().save("cfd-result", cfd.result_key(cfg), result.to_arrays())
         if name == "cfd":
             cache_state = str(result.diagnostics.get("cache", "computed"))
         elif name == "legacy_cfd":
@@ -318,6 +326,17 @@ def cfd_compute_seconds(run: BackendRun) -> float | None:
         if value:
             return float(value)
     return run.solve_seconds
+
+
+def backend_end_to_end_seconds(run: BackendRun) -> float | None:
+    """Original CFD backend computation time; other backends have no complete-result lookup."""
+    if run.backend == "cfd" and run.result is not None:
+        original = run.result.diagnostics.get("computed_backend_seconds")
+        if original is not None:
+            return float(original)
+        if str(run.result.diagnostics.get("cache", "")).startswith("disk cache"):
+            return None  # older caches did not record this measurement
+    return run.end_to_end_seconds
 
 
 def realistic_seconds(run: BackendRun) -> float | None:

@@ -15,11 +15,10 @@ from .. import __version__
 from ..backends.base import bundle_root
 from ..config import ProjectConfig
 from ..materials import colors_for
-from ..models.domain import FIDELITY_CELLS, plan_groups
+from ..models.domain import FIDELITY_CELLS
 from ..models.validity import MODEL_CARDS
 from ..plotter import result_figure
 from ..results import SimulationResult
-from ..units import UNITS
 from .bridge import SolverRunner
 from .comparison_view import ComparisonController
 from .geometry_view import GeometryEditor
@@ -76,102 +75,6 @@ def default_project() -> ProjectConfig:
                          inlets=[InletSpec("in1", "A", flow_rate=2e-9 / 60)])
 
 
-class SequencePanel(QtWidgets.QWidget):
-    """Physical operation sequence (ordered by station); toggle and reorder by swapping stations."""
-
-    def __init__(self, state: ProjectState, on_select, parent=None):
-        super().__init__(parent)
-        self.state = state
-        self.on_select = on_select
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        heading = QtWidgets.QLabel("<b>Operation sequence</b> (physical station order; features closer than the "
-                                   "interaction distance form one coupled group)")
-        heading.setWordWrap(True)
-        layout.addWidget(heading)
-        self.list = QtWidgets.QListWidget()
-        self.list.itemChanged.connect(self._toggled)
-        self.list.currentRowChanged.connect(self._selected)
-        layout.addWidget(self.list, 1)
-        buttons = QtWidgets.QHBoxLayout()
-        for label, step in (("Move upstream", -1), ("Move downstream", 1)):
-            button = QtWidgets.QPushButton(label)
-            button.clicked.connect(lambda _=False, s=step: self._move(s))
-            buttons.addWidget(button)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
-        state.changed.connect(self.refresh)
-        self.refresh()
-
-    def entries(self) -> list[tuple[str, int, float]]:
-        cfg = self.state.config
-        out = []
-        for i, p in enumerate(cfg.pillars):
-            out.append(("pillar", i, float(p.footprint()[:, 0].mean())))
-        for i, inlet in enumerate(cfg.inlets):
-            if inlet.placement == "port":
-                out.append(("inlet", i, inlet.station))
-        return sorted(out, key=lambda e: e[2])
-
-    def refresh(self) -> None:
-        cfg = self.state.config
-        unit = cfg.display.length_unit
-        scale = 1.0 / UNITS["length"][unit]
-        self.list.blockSignals(True)
-        self.list.clear()
-        try:
-            groups = plan_groups(cfg)
-        except Exception:  # noqa: BLE001 - invalid geometry is reported by the setup panel
-            groups = []
-        group_of = {}
-        for g in groups:
-            for p in g.pillars:
-                group_of[("pillar", p.id)] = g.index + 1
-            for port in g.ports:
-                group_of[("inlet", port.id)] = g.index + 1
-        for kind, index, x in self.entries():
-            spec = cfg.pillars[index] if kind == "pillar" else cfg.inlets[index]
-            group = group_of.get((kind, spec.id))
-            label = (f"x = {x * scale:8.1f} {unit}   {kind:6s} {spec.id}"
-                     + (f"   (group {group})" if group else "   (disabled)"))
-            item = QtWidgets.QListWidgetItem(label)
-            item.setData(QtCore.Qt.UserRole, (kind, index))
-            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.Checked if spec.enabled else QtCore.Qt.Unchecked)
-            self.list.addItem(item)
-        self.list.blockSignals(False)
-
-    def _toggled(self, item: QtWidgets.QListWidgetItem) -> None:
-        kind, index = item.data(QtCore.Qt.UserRole)
-        enabled = item.checkState() == QtCore.Qt.Checked
-        self.state.apply(lambda c: setattr((c.pillars if kind == "pillar" else c.inlets)[index], "enabled", enabled))
-
-    def _selected(self, row: int) -> None:
-        if row >= 0:
-            self.on_select(*self.list.item(row).data(QtCore.Qt.UserRole))
-
-    def _move(self, step: int) -> None:
-        row = self.list.currentRow()
-        entries = self.entries()
-        other = row + step
-        if row < 0 or not 0 <= other < len(entries):
-            return
-        (k1, i1, x1), (k2, i2, x2) = entries[row], entries[other]
-
-        def shift(c: ProjectConfig, kind: str, index: int, dx: float) -> None:
-            if kind == "pillar":
-                c.pillars[index].x += dx
-            else:
-                c.inlets[index].station += dx
-
-        def mutate(c: ProjectConfig) -> None:
-            shift(c, k1, i1, x2 - x1)
-            shift(c, k2, i2, x1 - x2)
-
-        self.state.apply(mutate)
-        self.list.setCurrentRow(other)
-
-
 class MainWindow(QtWidgets.QMainWindow):
     """One combined window: setup on the left; geometry, 3D flow and results on the right.
 
@@ -199,18 +102,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.live_timer.timeout.connect(lambda: self.run(live=True))
 
         self.setup = SetupPanel(self.state)
-        self.sequence = SequencePanel(self.state, self._select_feature)
         self.geometry = GeometryEditor(self.state)
         self.view3d = FlowView3D(self.state)
         self.results = ResultsView()
         self.results.export_requested.connect(self.export_result)
-        self.results.station_changed.connect(self.view3d.set_station)
         self.results.visibility_changed.connect(self.view3d.set_hidden)
         self.comparison = ComparisonController(self.state, self.results, self)
+        self.view3d.station_changed.connect(self.results.set_station)
+        self.view3d.station_changed.connect(self.comparison.set_station)
         self.comparison.new_run.connect(self._comparison_new_run)
         self.comparison.busy_changed.connect(self._comparison_busy)
+        self.comparison.message.connect(self._set_status)
         self.comparison.cfd_changed.connect(self.view3d.set_cfd_result)
-        self.results.station_changed.connect(self.comparison.set_station)
         self.results.visibility_changed.connect(lambda _: self._comparing() and self.comparison.redraw())
 
         top = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
@@ -222,7 +125,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.result_split.addWidget(self.results)
         self.result_split.addWidget(self.comparison.cfd_pane)
         self.result_split.addWidget(self.comparison.legacy_cfd_pane)
-        self.result_split.setSizes([500, 700, 500, 500])
+        self.result_split.setChildrenCollapsible(False)
+        for index in range(4):
+            self.result_split.setStretchFactor(index, 1)
+        self.result_split.setSizes([1, 1, 1, 1])
         results_area = QtWidgets.QWidget()
         area = QtWidgets.QVBoxLayout(results_area)
         area.setContentsMargins(0, 0, 0, 0)
@@ -234,7 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.work.setSizes([400, 560])
         left = QtWidgets.QSplitter(QtCore.Qt.Vertical)
         left.addWidget(self.setup)
-        left.addWidget(self.sequence)
+        left.addWidget(self.comparison.runtime_chart)
         left.setSizes([720, 240])
         main = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         self.setup.setMinimumWidth(420)
@@ -243,6 +149,10 @@ class MainWindow(QtWidgets.QMainWindow):
         main.setStretchFactor(0, 0)
         main.setStretchFactor(1, 1)
         main.setSizes([460, 1140])
+        for splitter in (top, self.result_split, self.work, left, main):
+            splitter.setHandleWidth(0)
+            for index in range(1, splitter.count()):
+                splitter.handle(index).setEnabled(False)
         self.setCentralWidget(main)
         self.setup.selection_changed.connect(self._table_selected)
         self.geometry.item_selected.connect(lambda kind, row: self.setup.select(kind, row))
@@ -263,6 +173,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ actions, menus, toolbar
     def _build_actions(self) -> None:
+        self.fullscreen_action = self._make_action("Fullscreen", self.toggle_fullscreen, "F11")
+        self.addAction(self.fullscreen_action)
         self.run_action = self._make_action("&Run", lambda: self.run(), "F5")
         self.run_action.setIcon(symbol_icon("run"))
         self.run_action.setToolTip("Run the simulation (F5): the new solver, then every comparison that is on")
@@ -302,6 +214,16 @@ class MainWindow(QtWidgets.QMainWindow):
         action.triggered.connect(slot)
         return action
 
+    def toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            if self._fullscreen_was_maximized:
+                self.showMaximized()
+            else:
+                self.showNormal()
+        else:
+            self._fullscreen_was_maximized = self.isMaximized()
+            self.showFullScreen()
+
     def _build_menus(self) -> None:
         bar = self.menuBar()
         file = bar.addMenu("&File")
@@ -316,22 +238,6 @@ class MainWindow(QtWidgets.QMainWindow):
         edit = bar.addMenu("&Edit")
         self.undo_action = self._action(edit, "&Undo", self.state.undo, QtGui.QKeySequence.Undo)
         self.redo_action = self._action(edit, "&Redo", self.state.redo, QtGui.QKeySequence.Redo)
-        bar.addAction(self.run_action)  # a button, not a menu: one click runs
-        compare = bar.addMenu("&Compare")
-        for action in (self.compare, self.compare_cfd, self.compare_legacy_cfd):
-            compare.addAction(action)
-        solver = bar.addMenu("&Solver")
-        solver.addAction(self.cancel_action)
-        solver.addAction(self.live)
-        accuracy = solver.addMenu("&Accuracy")
-        accuracy.setToolTipsVisible(True)
-        for action in self.accuracy_actions.values():
-            accuracy.addAction(action)
-        solver.addSeparator()
-        self._action(solver, "Restart solver worker", self.runner.restart)
-        help_menu = bar.addMenu("&Help")
-        self._action(help_menu, "Model card and validity", self.show_model_card)
-        self._action(help_menu, "&About", self.about)
 
     def _build_toolbar(self) -> None:
         tools = self.addToolBar("Main")
@@ -423,7 +329,9 @@ class MainWindow(QtWidgets.QMainWindow):
                       cfg.display.length_unit).savefig(out / "sections.png", dpi=200)
         self.view3d.figure.savefig(out / "flow_3d.png", dpi=200)
         (out / "diagnostics.json").write_text(json.dumps({
-            "status": self.last_result.status, "validity": self.last_result.validity,
+            "status": self.last_result.status, "message": self.last_result.message,
+            "diagnostics": self.last_result.diagnostics, "warnings": self.last_result.warnings,
+            "validity": self.last_result.validity,
             "timings": self.last_result.timings, "provenance": self.last_result.provenance,
             "solver": self.last_result.solver}, indent=2, default=str), encoding="utf-8")
         self._set_status(f"Exported to {out}")
@@ -530,6 +438,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.results.mark_stale(not current)
         self.view3d.set_result(result, stale=not current)
         self.comparison.set_new_result(result)
+        if self.view3d.station is not None:
+            self.results.set_station(self.view3d.station)
+        self.comparison.set_station(self.view3d.station)
 
     def _is_current(self, result: SimulationResult) -> bool:
         return result.input_hash == self.state.config.input_hash()  # the accuracy is one of the inputs
@@ -550,10 +461,19 @@ class MainWindow(QtWidgets.QMainWindow):
         top = height * (30 if shown else 42) // 100  # comparisons need room for the strip
         self.work.setSizes([top, height - top])
         if shown:
-            width = max(self.result_split.width(), 4)
-            side = width * {1: 40, 2: 30, 3: 24}[shown] // 100  # the new result keeps the largest share
-            self.result_split.setSizes([side if legacy else 0, width - shown * side, side if cfd_on else 0,
-                                        side if mapped else 0])
+            self._equal_result_widths()
+            QTimer.singleShot(0, self._equal_result_widths)
+
+    def _equal_result_widths(self) -> None:
+        visible = (self.compare.isChecked(), True, self.compare_cfd.isChecked(),
+                   self.compare_legacy_cfd.isChecked())
+        side = max(self.result_split.width(), 4) // sum(visible)
+        self.result_split.setSizes([side if on else 0 for on in visible])
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "result_split") and hasattr(self, "compare"):
+            QTimer.singleShot(0, self._equal_result_widths)
 
     def _state_changed(self) -> None:
         name = self.state.path.name if self.state.path else "untitled"
@@ -567,9 +487,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.view3d.mark_stale(stale)
         if self.live.isChecked():
             self.live_timer.start(700)  # debounce rapid edits
-
-    def _select_feature(self, kind: str, index: int) -> None:
-        self.setup.select(kind, index)
 
     def _table_selected(self, kind: str, row: int) -> None:
         for item in self.geometry.top_scene.items():

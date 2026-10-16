@@ -58,22 +58,19 @@ def test_launch_run_preview_and_mark_stale(app, window):
     assert not window.results.stale
 
 
-def test_one_click_run_button_in_the_menu_bar(app, window):
+def test_simplified_menu_bar_and_one_click_run_in_toolbar(app, window):
     from PySide6.QtTest import QTest
 
     from crossflow_simulator.gui.qt import QtCore, QtWidgets
 
     bar = window.menuBar()
     entries = {a.text().replace("&", ""): a for a in bar.actions()}
-    assert list(entries) == ["File", "Edit", "Run", "Compare", "Solver", "Help"]
-    run = entries["Run"]
-    assert run is window.run_action and run.menu() is None and not run.icon().isNull()  # a button, not a menu
-    assert entries["Compare"].menu().actions() == [window.compare, window.compare_cfd, window.compare_legacy_cfd]
-    assert {window.cancel_action, window.live} <= set(entries["Solver"].menu().actions())
-    # no separate reference run of the new solver: the reference is the CFD comparison (Accuracy is Low/Medium/High)
-    labels = [a.text() for menu in bar.findChildren(QtWidgets.QMenu) for a in menu.actions()]
-    assert not any("reference" in label.lower() for label in labels) and not hasattr(window.setup, "fidelity")
-    QTest.mouseClick(bar, QtCore.Qt.MouseButton.LeftButton, pos=bar.actionGeometry(run).center())
+    assert list(entries) == ["File", "Edit"]
+    toolbar = window.findChild(QtWidgets.QToolBar)
+    assert {window.run_action, window.cancel_action, window.live, window.compare,
+            window.compare_cfd, window.compare_legacy_cfd} <= set(toolbar.actions())
+    run_button = toolbar.widgetForAction(window.run_action)
+    QTest.mouseClick(run_button, QtCore.Qt.MouseButton.LeftButton)
     assert wait(app, lambda: window.last_result is not None, 120)
     assert window.last_result.ok and window.last_result.provenance["fidelity"] == "preview"
 
@@ -82,9 +79,6 @@ def test_accuracy_low_medium_high_chooses_the_new_solvers_flow_grid(app, window)
     combo = window.accuracy
     assert [combo.itemText(i) for i in range(combo.count())] == ["Low", "Medium", "High"]
     assert combo.currentText() == "Low" and window.accuracy_actions["preview"].isChecked()
-    solver = next(a.menu() for a in window.menuBar().actions() if a.text().replace("&", "") == "Solver")
-    accuracy = next(a.menu() for a in solver.actions() if a.menu() and a.text().replace("&", "") == "Accuracy")
-    assert [a.text() for a in accuracy.actions()] == ["Low", "Medium", "High"]
     window.run()
     assert wait(app, lambda: window.last_result is not None, 120)
     low = window.last_result
@@ -99,12 +93,207 @@ def test_accuracy_low_medium_high_chooses_the_new_solvers_flow_grid(app, window)
     window.run()
     assert wait(app, lambda: window.last_result is not low and window._is_current(window.last_result), 180)
     assert window.last_result.provenance["fidelity"] == "reference" and not window.results.stale
-    tree = window.results.diagnostics
-    rows = {tree.topLevelItem(i).text(0): tree.topLevelItem(i).text(1) for i in range(tree.topLevelItemCount())}
-    assert rows["Accuracy"].startswith("High (20 flow cells")
+    assert window.last_result.message in window.results.status.text()
     window.state.undo()
     app.processEvents()
     assert combo.currentText() == "Medium" and window.results.stale
+
+
+def test_comparison_panes_export_their_own_results_and_keep_run_text(app, window, tmp_path, monkeypatch):
+    import json
+    from dataclasses import replace
+
+    from crossflow_simulator.comparison import BackendRun
+    from crossflow_simulator.gui.qt import NavigationToolbar2QT, QtWidgets
+    from crossflow_simulator.results import SimulationResult
+    from crossflow_simulator.simulator import simulate
+
+    result = simulate(window.state.config)
+    assert result.ok
+    panes = (("legacy", window.comparison.pane), ("cfd", window.comparison.cfd_pane),
+             ("legacy_cfd", window.comparison.legacy_cfd_pane))
+    for backend, pane in panes:
+        assert not pane.findChildren(NavigationToolbar2QT)
+        assert not pane.export_button.isEnabled()
+        native = replace(result, backend=backend, message=f"{backend} run complete")
+        run = BackendRun(backend, "success", native.message, result=native)
+        pane.show_run(run, "um", "material", None)
+        status = pane.status.text()
+        assert native.message in status
+        assert not pane.findChildren(QtWidgets.QTreeWidget)
+        assert pane.export_button.isEnabled()
+        output = tmp_path / backend
+        output.mkdir()
+        monkeypatch.setattr(QtWidgets.QFileDialog, "getExistingDirectory", lambda *_, p=output: str(p))
+        pane.export_button.click()
+        exported = SimulationResult.load(output / "result.npz")
+        assert exported.backend == backend and exported.message == native.message
+        np.testing.assert_array_equal(exported.final.codes, native.final.codes)
+        assert ProjectConfig.load(output / "config.json") == window.state.config
+        assert (output / "sections.png").stat().st_size > 0
+        assert json.loads((output / "diagnostics.json").read_text())["message"] == native.message
+        assert pane.status.text() == status
+        pane.show_run(BackendRun(backend, "unsupported", "Unavailable", unsupported=["Unavailable"]),
+                      "um", "material", None)
+        assert not pane.export_button.isEnabled()
+
+
+@pytest.mark.parametrize("enabled", [(True, False, False), (False, True, False),
+                                    (True, True, False), (True, True, True)])
+def test_visible_solver_images_have_equal_size(app, window, enabled):
+    from dataclasses import replace
+
+    from crossflow_simulator.comparison import BackendRun
+    from crossflow_simulator.gui.qt import QtCore, QtWidgets
+    from crossflow_simulator.simulator import simulate
+
+    result = simulate(window.state.config)
+    window.show_result(result)
+    for action, on in zip((window.compare, window.compare_cfd, window.compare_legacy_cfd), enabled):
+        action.setChecked(on)
+    for backend, pane in window.comparison.panes.items():
+        if window.comparison.enabled[backend]:
+            native = replace(result, backend=backend)
+            pane.show_run(BackendRun(backend, "success", native.message, result=native), "um", "material", None)
+    for size in ((1600, 1000), (1850, 1100)):
+        window.resize(*size)
+        for _ in range(4):
+            app.processEvents()
+        window.comparison._size_plots()
+        canvases = [c for c in window.comparison.canvases if c.isVisibleTo(window)]
+        bounds = []
+        baselines = []
+        for canvas in canvases:
+            canvas.draw()
+            assert len(canvas.axes.images) == 1
+            bounds.append(canvas.axes.get_window_extent().size)
+            scale = canvas.figure.bbox.height / canvas.height()
+            baseline = canvas.axes.transData.transform((0, 0))[1] / scale
+            baselines.append(canvas.mapToGlobal(QtCore.QPoint(0, 0)).y() + canvas.height() - baseline)
+        assert len(bounds) == 1 + sum(enabled)
+        for bound in bounds[1:]:
+            np.testing.assert_allclose(bound, bounds[0], atol=0.5, rtol=0)
+        np.testing.assert_allclose(baselines, baselines[0], atol=0.5, rtol=0)
+        assert not window.results.findChildren(QtWidgets.QTreeWidget)
+        assert window.comparison.runtime_chart.isVisibleTo(window)
+        assert not hasattr(window.comparison, "summary")
+
+
+def test_new_solver_controls_status_and_locked_panes(app, window):
+    from crossflow_simulator.gui.qt import QtWidgets
+    from crossflow_simulator.simulator import simulate
+
+    window.show_result(simulate(window.state.config))
+    app.processEvents()
+    view = window.results
+    assert "#1B5E20" in view.status.styleSheet()
+    assert not view.findChildren(QtWidgets.QToolButton)
+    assert not view.findChildren(QtWidgets.QSlider)
+    assert view.canvas.axes.get_title() == view.result.final.name
+    assert {box.text() for box in view.findChildren(QtWidgets.QCheckBox)} == {
+        "Difference to CFD", "Difference to legacy CFD"}
+    boxes = list(view.differences.values())
+    assert boxes[0].y() == boxes[1].y()
+    assert all(box.y() + box.height() <= view.canvas.y() for box in boxes)
+    view.mark_stale(True)
+    assert "#B00020" in view.status.styleSheet()
+    view.mark_stale(False)
+    assert "#1B5E20" in view.status.styleSheet()
+    assert window.minimumSize() != window.maximumSize()
+    for splitter in window.findChildren(QtWidgets.QSplitter):
+        for index in range(1, splitter.count()):
+            assert not splitter.handle(index).isEnabled()
+
+
+def test_cached_cfd_performance_shows_computation_timings(app, window, monkeypatch):
+    from crossflow_simulator.gui.comparison_view import _performance_values
+    from crossflow_simulator.simulator import simulate
+
+    result = simulate(window.state.config)
+    result.backend = "cfd"
+    result.diagnostics.update(computed_seconds=87.5, computed_backend_seconds=88.25,
+                              cache="disk cache (computed in 87.5 s)")
+    monkeypatch.setattr("crossflow_simulator.gui.comparison_view.cfd.cached_result", lambda cfg: result)
+    assert window.comparison.load_cached_cfd()
+    run = window.comparison.runs["cfd"]
+    # Loading the same result again must not replace its compute time with lookup time.
+    run.solve_seconds = 0.002
+    run.end_to_end_seconds = 0.005
+    values = _performance_values("cfd", run, run)
+    assert values[1:3] == ["87.50 s", "88.25 s"]
+
+
+def test_runtime_chart_tracks_selected_solvers_and_original_cfd_compute_time(app, window):
+    from dataclasses import replace
+
+    from crossflow_simulator.comparison import BackendRun
+    from crossflow_simulator.simulator import simulate
+
+    controller = window.comparison
+    chart = controller.runtime_chart
+    assert chart.records == [("new", "New solver", None, "not run")]
+    result = simulate(window.state.config)
+    window.show_result(result)
+    assert chart.records == [("new", "New solver", result.timings["total"], "success")]
+    window.compare.setChecked(True)
+    window.compare_cfd.setChecked(True)
+    window.compare_legacy_cfd.setChecked(True)
+    native = replace(result, backend="cfd", diagnostics={**result.diagnostics, "computed_seconds": 87.5})
+    controller.runs.update({
+        "legacy": BackendRun("legacy", "success", "Done", solve_seconds=2.5, result=result),
+        "cfd": BackendRun("cfd", "success", "Cached", solve_seconds=0.002, result=native),
+        "legacy_cfd": BackendRun("legacy_cfd", "success", "Precomputed", solve_seconds=0.02, result=result),
+    })
+    controller.fill_performance()
+    rows = {row[0]: row for row in chart.records}
+    assert set(rows) == {"new", "legacy", "cfd"}
+    assert rows["new"][2] == result.timings["total"]
+    assert rows["legacy"][2] == 2.5
+    assert rows["cfd"][2] == 87.5
+    assert controller.performance.item(1, 3).text() == "\u2014"
+    np.testing.assert_allclose([bar.get_width() for bar in chart.axes.patches],
+                               [result.timings["total"], 2.5, 87.5])
+    window.compare.setChecked(False)
+    assert "legacy" not in {row[0] for row in chart.records}
+    window.state.apply(lambda cfg: setattr(cfg.inlets[0], "flow_rate", cfg.inlets[0].flow_rate * 2))
+    assert next(row for row in chart.records if row[0] == "new")[3] == "stale"
+
+
+def test_new_export_button_is_bottom_left_and_still_emits(app, window):
+    from PySide6.QtTest import QSignalSpy
+
+    view = window.results
+    app.processEvents()
+    button = view.export_button
+    assert button.x() == view.canvas.x()
+    assert button.y() >= view.canvas.y() + view.canvas.height()
+    assert button.width() < view.width() / 2
+    spy = QSignalSpy(view.export_requested)
+    # Avoid opening a native export dialog through the main window connection.
+    view.export_requested.disconnect(window.export_result)
+    button.click()
+    assert spy.count() == 1
+
+
+def test_maximizing_and_fullscreen_preserve_locked_panes(app, window):
+    from PySide6.QtTest import QTest
+
+    from crossflow_simulator.gui.qt import QtCore
+
+    window.showMaximized()
+    app.processEvents()
+    assert window.isMaximized()
+    QTest.keyClick(window, QtCore.Qt.Key_F11)
+    app.processEvents()
+    assert window.isFullScreen()
+    QTest.keyClick(window, QtCore.Qt.Key_F11)
+    app.processEvents()
+    assert window.isMaximized() and not window.isFullScreen()
+    window.showNormal()
+    window.toggle_fullscreen()
+    assert window.isFullScreen()
+    window.toggle_fullscreen()
+    assert not window.isFullScreen() and not window.isMaximized()
 
 
 def test_latest_job_wins(app, window):
@@ -210,7 +399,7 @@ def test_one_window_without_tabs_and_optional_comparison_panes(app, window):
 
     controller = window.comparison
     assert not window.findChildren(QtWidgets.QTabWidget)
-    for widget in (window.setup, window.geometry, window.view3d, window.results, window.sequence):
+    for widget in (window.setup, window.geometry, window.view3d, window.results, controller.runtime_chart):
         assert widget.isVisibleTo(window)
     assert not any(w.isVisibleTo(window) for w in (controller.pane, controller.cfd_pane, controller.legacy_cfd_pane,
                                                    controller.strip))
@@ -223,12 +412,14 @@ def test_one_window_without_tabs_and_optional_comparison_panes(app, window):
     assert controller.pane.isVisibleTo(window) and controller.cfd_pane.isVisibleTo(window)
     assert "Ready" in controller.cfd_pane.status.text()
     sizes = window.result_split.sizes()
-    assert sizes[0] > 0 and sizes[2] > 0 and sizes[1] > sizes[0]
+    assert all(s > 0 for s in sizes[:3])
     window.compare_legacy_cfd.setChecked(True)  # all four results side by side
     app.processEvents()
     assert controller.legacy_cfd_pane.isVisibleTo(window) and "Ready" in controller.legacy_cfd_pane.status.text()
     sizes = window.result_split.sizes()
-    assert all(s > 0 for s in sizes) and sizes[1] >= max(sizes[0], sizes[2], sizes[3])
+    # The fixed window accommodates each pane's controls; image size/alignment
+    # is checked independently of the containing widgets' minimum widths.
+    assert all(s > 0 for s in sizes)
     assert not controller.performance.isColumnHidden(3)
     # the only differences on offer are to the CFD and the legacy CFD, once their comparison is on
     labels = [w.text() for w in window.results.findChildren(QtWidgets.QAbstractButton)]
@@ -268,21 +459,92 @@ def test_3d_view_animates_the_computed_flow_and_hides_it_when_stale(app, window,
     view.advance(0.5)
     after = view.particle_positions()
     assert len(before) > 100 and not np.allclose(before, after)
-    # cells without a valid trajectory were filled from their neighbours, and the results view says how many
-    tree = window.results.diagnostics
-    trajectories = next(tree.topLevelItem(i) for i in range(tree.topLevelItemCount())
-                        if tree.topLevelItem(i).text(0) == "Trajectories (final)")
-    rows = {trajectories.child(i).text(0): trajectories.child(i).text(1) for i in range(trajectories.childCount())}
+    # Removing the diagnostics table does not remove the data from the result.
     filled = int(window.last_result.final.filled.sum())
-    assert filled > 0 and rows["Filled from neighbours"] == f"{filled} ({100 * filled / 12800:.3g} %)"
+    assert filled > 0
+    assert window.last_result.final.diagnostics["trajectory_status"]["filled_from_neighbours"] == filled
     assert np.all((after[:, 1] >= -1e-9) & (after[:, 1] <= cfg.channel.width + 1e-9))
     assert np.all((after[:, 2] >= -1e-9) & (after[:, 2] <= cfg.channel.height + 1e-9))
-    window.results.slider.setValue(0)  # the selected station is shown in 3D
-    assert view.station == 0
+    assert view.station is None  # the 3D view defaults to the final calculated section
     window.state.apply(lambda c: setattr(c.pillars[0], "x", c.pillars[0].x + 50e-6))
     app.processEvents()
     assert not view.flow_shown and len(view.particle_positions()) == 0
     assert "Inputs changed" in view.message
+
+
+@pytest.mark.parametrize("proportions", ["true proportions", "compressed length"])
+def test_3d_preview_keeps_channel_corners_and_axis_labels_inside_canvas(app, examples_dir, proportions):
+    from crossflow_simulator.gui.state import ProjectState
+    from crossflow_simulator.gui.view3d import FlowView3D
+
+    view = FlowView3D(ProjectState(ProjectConfig.load(examples_dir / "parallel_unequal.json")))
+    view.proportions.setCurrentText(proportions)
+    view.show()
+    try:
+        for size in ((1168, 350), (900, 280), (1500, 420)):
+            view.resize(*size)
+            app.processEvents()
+            for elevation, azimuth in ((24, -58), (32, -35)):
+                view.ax.view_init(elev=elevation, azim=azimuth)
+                for _ in range(8):
+                    view.canvas.draw()
+                    app.processEvents()
+                bounds = view._scene_bounds(view.canvas.get_renderer())
+                width, height = view.figure.bbox.size
+                assert bounds.x0 >= 15 and bounds.x1 <= width - 15
+                assert bounds.y0 >= 29 and bounds.y1 <= height - 11
+                assert not any(collection.get_clip_on() for collection in view.ax.collections)
+    finally:
+        view.timer.stop()
+        view.close()
+
+
+def test_3d_station_slider_drags_and_updates_sections_without_recalculating(app, window, examples_dir):
+    from PySide6.QtTest import QTest
+
+    from crossflow_simulator.gui.qt import QtCore, QtWidgets
+    from crossflow_simulator.simulator import simulate
+
+    view = window.view3d
+    assert not view.station_slider.isEnabled()
+    window.state.replace(ProjectConfig.load(examples_dir / "square_library_pillars.json"), None)
+    result = simulate(window.state.config)
+    assert result.ok and len(result.sections) == 3
+    window.show_result(result)
+    app.processEvents()
+    slider = view.station_slider
+    assert slider.isEnabled() and slider.value() == 2
+    assert not window.results.findChildren(QtWidgets.QSlider)
+    view.canvas.draw()
+    final_collections = len(view.ax.collections)
+    option = QtWidgets.QStyleOptionSlider()
+    slider.initStyleOption(option)
+    handle = slider.style().subControlRect(QtWidgets.QStyle.CC_Slider, option,
+                                          QtWidgets.QStyle.SC_SliderHandle, slider)
+    QTest.mousePress(slider, QtCore.Qt.LeftButton, pos=handle.center())
+    QTest.mouseMove(slider, QtCore.QPoint(2, slider.height() // 2))
+    app.processEvents()
+    # Tracking redraws the preview while the mouse is still held down.
+    assert slider.value() == view.station == 0
+    assert len(view.ax.collections) == final_collections - 1
+    QTest.mouseRelease(slider, QtCore.Qt.LeftButton, pos=QtCore.QPoint(2, slider.height() // 2))
+    app.processEvents()
+    assert slider.value() == view.station == window.comparison.station == 0
+    assert result.sections[0].name in view.station_label.text()
+    assert window.results.canvas.axes.get_title() == result.sections[0].name
+    assert len(view.ax.collections) == final_collections - 1
+    QTest.keyClick(slider, QtCore.Qt.Key_Right)
+    app.processEvents()
+    assert slider.value() == view.station == 1
+    assert window.results.canvas.axes.get_title() == result.sections[1].name
+    assert result.sections[1].name in view.station_label.text()
+    assert window.last_result is result
+    window.show_result(result)
+    assert slider.value() == 2 and window.results.station is None and window.comparison.station is None
+    view.mark_stale(True)
+    assert not slider.isEnabled()
+    view.mark_stale(False)
+    assert slider.isEnabled()
 
 
 def test_auto_update_runs_a_preview_after_an_edit(app, window):
@@ -303,7 +565,6 @@ def test_compare_with_legacy_runs_both_and_shows_performance(app, window, tmp_pa
     assert runs["legacy"].status == "success" and runs["new"].status == "success"
     assert window.last_result is runs["new"].result  # the new side is the main results view
     assert controller.metrics.rowCount() == 3  # legacy vs new, per stream
-    assert "Speedup" in controller.summary.text()
     assert controller.performance.item(0, 0).text() == "success" and controller.performance.item(0, 1).text() == "success"
     assert not any(box.isEnabled() for box in window.results.differences.values())  # no difference to legacy
     from crossflow_simulator.comparison import export_comparison
@@ -326,19 +587,15 @@ def test_compare_with_cfd_shows_the_reference_accuracy_and_3d_flow(app, window, 
     assert window.last_result is controller.runs["new"].result
     compared = [controller.metrics.item(r, 0).text() for r in range(controller.metrics.rowCount())]
     assert compared == ["New vs CFD", "New vs CFD"]
-    assert "mesh uncertainty" in controller.summary.text() and "New solver vs CFD" in controller.summary.text()
     assert controller.performance.item(0, 2).text() == "success"
     assert "faster" in controller.performance.item(6, 1).text()  # speed of the new solver vs the CFD
-    assert "Mesh uncertainty (final)" in [controller.cfd_pane.performance.topLevelItem(i).text(0)
-                                  for i in range(controller.cfd_pane.performance.topLevelItemCount())]
-    # the CFD pane follows the station slider; the overlay marks where the new result differs from the CFD
-    window.results.slider.setValue(0)
+    assert run.result.diagnostics["cfd"]["mesh_convergence"] is not None
+    # Both panes show the final section; the overlay compares their final material labels.
     app.processEvents()
-    assert "inlet plane" in controller.cfd_pane.canvas.axes.get_title()
+    assert run.result.final.name in controller.cfd_pane.canvas.axes.get_title()
     window.results.differences["cfd"].setChecked(True)
-    assert window.results.reference[0] == "CFD reference" and window.results.slider.value() == 0
-    diagnostics = window.results.diagnostics
-    assert "Difference" in [diagnostics.topLevelItem(i).text(0) for i in range(diagnostics.topLevelItemCount())]
+    assert window.results.reference[0] == "CFD reference"
+    assert window.results.reference_codes(len(window.last_result.sections) - 1) is not None
     # the 3D view can animate the CFD flow
     view = window.view3d
     assert view.flow_source.isVisibleTo(window)
@@ -373,9 +630,6 @@ def test_all_four_results_side_by_side_with_accuracy_against_the_cfd(app, window
     compared = {controller.metrics.item(r, 0).text() for r in range(controller.metrics.rowCount())}
     assert compared == {"New vs CFD", "Legacy vs CFD", "Legacy CFD vs CFD", "Legacy vs New", "Legacy CFD vs New"}
     assert [controller.performance.item(0, c).text() for c in range(4)] == ["success"] * 4
-    assert "Legacy CFD vs CFD" in controller.summary.text()
-    assert "Upstream tool" in [controller.legacy_cfd_pane.performance.topLevelItem(i).text(0)
-                               for i in range(controller.legacy_cfd_pane.performance.topLevelItemCount())]
     differences = window.results.differences
     differences["cfd"].setChecked(True)
     assert window.results.reference[0] == "CFD reference"
@@ -389,11 +643,9 @@ def test_all_four_results_side_by_side_with_accuracy_against_the_cfd(app, window
     compared = [controller.metrics.item(r, 0).text() for r in range(controller.metrics.rowCount())]
     assert "New vs legacy CFD" in compared and "New vs CFD" not in compared and "Legacy CFD vs New" not in compared
     assert "Legacy CFD vs CFD" in compared  # the other solvers stay measured against the CFD reference
-    assert "New solver vs legacy CFD" in controller.summary.text()
     controller.compare_new.setChecked(False)
     compared = [controller.metrics.item(r, 0).text() for r in range(controller.metrics.rowCount())]
     assert not any(c.startswith("New vs") for c in compared) and not controller.reference.isEnabled()
-    assert "New solver vs" not in controller.summary.text()
 
 
 def test_new_solver_measured_against_the_legacy_cfd_alone(app, window):
@@ -409,13 +661,9 @@ def test_new_solver_measured_against_the_legacy_cfd_alone(app, window):
     compared = [controller.metrics.item(r, 0).text() for r in range(controller.metrics.rowCount())]
     assert compared == ["New vs legacy CFD"] * 3  # one row per stream
     assert [controller.metrics.item(r, 6).text() for r in range(3)] == ["within target"] * 3
-    assert "New solver vs legacy CFD" in controller.summary.text()
-    assert "no mesh-uncertainty estimate" in controller.summary.text()
-    # the legacy CFD's time includes the COMSOL simulations behind its maps (none in a straight channel)
+    # Applying stored maps does not measure the original CFD computation time.
     column = [controller.performance.horizontalHeaderItem(c).text() for c in range(4)].index("Legacy CFD")
-    assert "no COMSOL map used" in controller.performance.item(1, column).text()
-    tree = controller.legacy_cfd_pane.performance
-    assert "Time including COMSOL (estimated)" in [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
+    assert controller.performance.item(1, column).text() == "\u2014"
     window.set_accuracy("medium")  # the new solver's accuracy is not an input of the legacy CFD
     app.processEvents()
     assert window.results.stale and not controller._legacy_cfd_stale()

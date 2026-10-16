@@ -98,8 +98,7 @@ donor map that later sections compose with and that the map cache stores keeps t
 fresh and reused maps give identical sections. Each section keeps the raw per-cell `status`, a
 boolean `filled` array (saved in the result file and exports), `trajectory_status` with
 `filled_from_neighbours`, and `trajectory_fill` (failed, filled, unfilled, unfilled patch sizes).
-The validity check judges the share that failed before filling. The results view shows "Filled
-from neighbours: N (x %)" under Trajectories (final). In conservative transport, cells that no
+The validity check judges the share that failed before filling. The fill counts remain in the result diagnostics and exports. In conservative transport, cells that no
 traced fluid reaches get the one-hot fractions of their filled label in the shown section only.
 
 Sections are computed by tracing output points backward through all groups down to `x = 0`
@@ -333,89 +332,67 @@ and the accuracy record.
 
 ## GUI (`gui/`)
 
-One window, no tabs. The left column holds the setup panel (channel, materials, inlets and
-pattern, pillars, model settings, validation) with the operation sequence below it. Its "Add
-pillar" menu adds a right triangle or a non-isosceles trapezoid (parallel sides 0.6 W and 0.3 W
-along the flow, legs sloping 1:4 and 1:2); other polygons are typed as footprint vertices. The right
-side shows the geometry editor (top view with draggable pillars and ports, side view) next to
-the 3D flow view, with the results below them. ▶ Run sits directly in the menu bar (a button, not
-a menu) and first in the toolbar: one click, or F5, runs the new solver and then every comparison
-that is on. The Compare menu holds the three comparisons (legacy solver, CFD, legacy CFD); the
-Solver menu holds Cancel (Esc), auto-update and the worker restart. The toolbar also loads examples
-and has Cancel, auto-update and the comparison toggles. Accuracy, next to Run and in the Solver
-menu, chooses the new solver's fidelity preset: Low = `preview` (12 flow cells across the smaller
-dimension), Medium = `medium` (18), High = `reference` (20). It is a project input
-(`model.fidelity`): saved, undoable, and part of the new solver's input hash, so a result at
-another accuracy is marked STALE. Legacy and legacy CFD results ignore it when checking whether
-they are current, and the CFD key never contained it. The CLI takes `--fidelity preview | medium |
-reference`.
+One window, no tabs. The left column holds the setup and a horizontal bar chart comparing
+measured solve times for the new solver and selected legacy/CFD reference solvers. Legacy CFD
+is excluded because its original precomputation time is unavailable. The chart replaces
+the operation sequence panel; features remain editable in setup and the geometry editor.
+Unrun or unsupported solvers show a state rather than a zero runtime, and old-input results
+are marked stale. CFD bars use the original compute time when loading a cached result.
+The right side shows the geometry editor and animated 3D
+flow view above the solver results.
 
-* **3D flow view (`view3d.py`).** It shows the following:
-  * the channel box, with the inlet and outlet;
-  * pillars as extruded footprints (bottom- or top-mounted);
-  * ports as coloured discs with inflow arrows;
-  * the inlet section and the section selected in the results view;
-  * faint streamlines;
-  * particles that move along the result's pathlines from the inlets and ports to the outlet, at
-    relative physical speed.
+The menu bar contains only File and Edit. The toolbar holds examples, Run (F5), Cancel (Esc),
+auto-update, Accuracy, and the three comparison toggles. Accuracy selects the new solver's flow
+resolution: Low = `preview` (12 cells across the smaller channel dimension), Medium = `medium`
+(18), High = `reference` (20). It is saved with the project and participates in result staleness.
 
-  The geometry follows every edit immediately. The flow is hidden while the result is stale.
-  With the CFD comparison on, a selector switches the flow between the new solver and the CFD
-  reference.
-  Particles are blitted over a cached background, so a frame costs a few milliseconds and
-  rotating redraws the scene once. The channel length is shown compressed by default, or in
-  true proportions.
-* **Results (`results_view.py`).** Station slider, material visibility (also applied in 3D),
-  interface overlays, and diagnostics. "Difference to CFD" and "Difference to legacy CFD" (one
-  at a time, each available while its comparison is on) mark the cells where the new result
-  differs from that result at the selected station and add its IoU and interface shift per
-  stream to the diagnostics. There is no user-loaded reference.
-* **Comparisons (optional, `comparison_view.py`).** Any combination can be on, up to four results
-  side by side. The new results take the width that the comparison panes leave: 60% with one pane,
-  40% with two, 28% with three.
-  * "Compare with legacy solver" adds the legacy pane to the left of the new results.
-  * "Compare with CFD" adds the CFD pane to their right. The CFD pane follows the station slider
-    and has its own grid choice (quick 16, standard 24, fine 32 cells, with a time estimate), a
-    Run CFD button, a Recompute button, and a progress bar. Run CFD loads a stored result for the
-    same inputs; Recompute deletes the stored result and flow fields of this case (`cfd.forget`)
-    and computes them again, so the CFD compute time and every speed against it are measured
-    anew. The recomputed result is stored again. It lists every CFD statistic: mesh uncertainty per
-    station, numerical checks, per grid level the size, iterations, inertia effect, continuity
-    and pressure drop, plus flux fractions and stage timings. A stored CFD result for the current
-    inputs appears as soon as the comparison is switched on.
-  * "Compare with legacy CFD" adds the legacy CFD pane at the right. It follows the station slider
-    and lists the following:
-    * the upstream revision, licence and library link;
-    * the library file, with its entries, size, SHA-256 and load time;
-    * each library map applied, with its reflections and the share of the section it changed;
-    * its time including the COMSOL simulations behind the maps it applied. Applying stored maps
-      takes a fraction of a second, which is not a realistic cost. Each pillar map took about
-      2.25 min of COMSOL: the 900 published pillar streamline files were exported as one batch
-      over 33.7 h (their `% Date` stamps). The performance table and the speed against the CFD
-      use this time; the map application time is listed separately;
-    * flux fractions, stage timings, and the adapter's conventions.
-  * All panes share synchronized axes and colours.
-  * Below them, a strip shows every shown solver's measured performance and its speed relative to
-    the CFD, and an agreement table: new vs CFD, legacy vs CFD, legacy CFD vs CFD, legacy vs new,
-    and legacy CFD vs new, per stream, with a verdict. It also holds the summary, the legacy
-    benchmark, and the export.
-  * The "Compare new with" checkbox and its chooser decide whether the new solver is measured
-    against a CFD, and against which: the CFD reference or the legacy CFD. The chooser lists the
-    CFD panes that are on. Against the legacy CFD, the rows read "New vs legacy CFD" on its node
-    grid, and the plain targets apply because it has no mesh-uncertainty estimate. The duplicate
-    behavioural row is then dropped. Legacy and legacy CFD stay measured against the CFD reference.
-    The export and `crossflow compare` report `accuracy_vs_legacy_cfd` for the new solver as well.
-  * While a comparison is on, Run runs the new solver and then the enabled comparisons.
-    Auto-update runs only the new solver; the comparison panes are marked STALE until they are run
-    again.
-  * Cases that legacy, the CFD or legacy CFD cannot run are explained before any run.
+The visible solver panes share a horizontal row. Their plotted cross-section rectangles have
+identical pixel dimensions and aligned z=0 lines, recalculated after toggling comparisons.
+Pane dividers are locked. The main window can resize or maximize, and F11 toggles fullscreen,
+returning to the prior normal or maximized state. There are no
+per-solver diagnostic trees or Matplotlib navigation icon toolbars. Each pane retains its run
+status and output plot, with a bottom-left Export button for its native result, project snapshot, sections
+figure, and diagnostics. The new solver also exports the 3D view. Detailed numerical records
+remain in the result files and exports.
 
-`ProjectState` owns the configuration, with undo/redo, validation, and autosave recovery. The
-setup tables convert display units and highlight invalid cells inline. The solver never runs on
-the Qt event loop. `SolverRunner` uses a persistent worker with latest-job-wins semantics, and
-auto-update submits a run at the chosen accuracy 0.7 s after the last edit. `ComparisonRunner` uses a background
-thread. A result is never replaced by one computed for older inputs, and results whose input
-hash differs from the current project are marked STALE.
+The new solver has two difference checkboxes side by side above its plot.
+The Materials and Interfaces controls are removed; interfaces remain visible.
+The station slider is in the top-right 3D preview, with the selected section name and x position.
+Dragging it updates the visible 3D slice, New solver section, matching CFD sections, overlays,
+and agreement metrics without recalculating. It defaults to the final section after a run and
+is disabled before results are available or while those results are stale.
+Intermediate sections remain in the result data and exports.
+Successful current results display their run message in green; stale
+results display it in red. The CFD pane retains its grid choice, Run CFD, Recompute, estimate,
+and progress. Recompute deletes this case's stored result and fields before computing anew.
+
+Below the plots, the performance and agreement tables remain, together with the benchmark,
+reference chooser, and comparison export. The detailed bottom summary text is removed.
+Solve time shows actual computation duration; the CFD's saved computation time is retained on
+cache loads. End-to-end backend time likewise retains the original CFD submission-to-result-load
+measurement, persisted with the cached result. Older cache entries without this measurement
+show it as unavailable until recomputed. The legacy CFD's Solve time shows an em dash for all
+cases: map application measures a different operation, and the original CFD solve time cannot
+be reconstructed. Estimated upstream COMSOL costs remain in its exported result metadata.
+
+"Compare new with" chooses the CFD used to assess the new solver, or turns that assessment off.
+The difference overlays follow the same section selection; native legacy grids are regridded
+only for display and metrics. Run computes the new solver and enabled comparisons. Auto-update
+runs only the new solver, and comparison results become STALE after edits to their inputs.
+
+The 3D view shows the channel, extruded pillars, port openings, selected sections, streamlines,
+and particles moving along computed pathlines at relative physical speed.
+A selector can show the CFD flow while its comparison is on.
+Particles are blitted over a cached background. Geometry follows edits immediately; stale flow
+is hidden.
+The 3D scene is fitted using projected channel corners and label bounds after drawing, including
+resize and camera changes. Collections do not clip against the internal square Axes3D patch,
+which would otherwise cut off the outlet corner in a wide preview.
+
+`ProjectState` owns configuration, validation, undo/redo, and autosave recovery. The setup
+converts display units and highlights invalid inputs. Solvers run in isolated workers rather
+than on the Qt event loop. Auto-update submits after 0.7 seconds without an edit, and job IDs
+ensure an older result never replaces a newer one.
 
 ## Packaging (`packaging/`)
 

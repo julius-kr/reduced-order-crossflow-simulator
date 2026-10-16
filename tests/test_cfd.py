@@ -217,6 +217,32 @@ def test_results_are_cached_and_restamped(disk_cache):
     assert cfd.forget(cfg) == 2 and cfd.cached_result(cfg) is None and cfd.forget(cfg) == 0
 
 
+def test_backend_computation_timings_survive_cached_runs_and_worker_restart(disk_cache, tmp_path, monkeypatch):
+    from crossflow_simulator.comparison import backend_end_to_end_seconds, cfd_compute_seconds
+
+    monkeypatch.delenv("CROSSFLOW_DISABLE_DISK_CACHE", raising=False)
+    monkeypatch.setenv("CROSSFLOW_CACHE_DIR", str(disk_cache.root))
+    cfg = small(make_config(), cells=8, check=False, inertia=False)
+    cfg.grid.output_ny = 32
+    service = ComparisonService(tmp_path / "timing-work")
+    try:
+        first = service.run_backend("cfd", cfg, "first")
+        assert first.status == "success", first.message
+        expected_solve = first.result.diagnostics["computed_seconds"]
+        expected_backend = first.end_to_end_seconds
+        second = service.run_backend("cfd", cfg, "second")
+        assert second.status == "success" and second.cache_state.startswith("disk cache")
+        assert cfd_compute_seconds(second) == expected_solve
+        assert backend_end_to_end_seconds(second) == expected_backend
+        service.restart("cfd")
+        third = service.run_backend("cfd", cfg, "third")
+        assert third.status == "success" and third.cache_state.startswith("disk cache")
+        assert cfd_compute_seconds(third) == expected_solve
+        assert backend_end_to_end_seconds(third) == expected_backend
+    finally:
+        service.close()
+
+
 def test_interface_shift_is_the_mean_normal_displacement():
     z = np.arange(40)[:, None] * np.ones((1, 60))
     a = np.where(z < 20, 1, 2)
