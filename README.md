@@ -8,9 +8,9 @@ synchronized cross-section plots, and runtime comparisons. Compare solver predic
 side against a CFD reference, or use the command line to run cases and export results.
 
 - **New solver:** grouped 3D Stokes flow calculations with continuous material transport.
-- **Legacy:** the frozen original heuristic model.
-- **CFD reference:** a full-channel 3D Navier?Stokes calculation.
-- **Legacy CFD:** stored COMSOL streamline maps; original solve times are unavailable.
+- **Legacy:** frozen original heuristic model.
+- **CFD reference:** a full-channel 3D Navier Stokes calculation. Based on [OpenFOAM/OpenFOAM-13](https://github.com/OpenFOAM/OpenFOAM-13)
+- **Legacy CFD:** stored COMSOL streamline maps; original solve times are unavailable. Code from [Yiyingzou/3D-hydrodynamic-flow-sculpting](https://github.com/yiyingzou/3D-hydrodynamic-flow-sculpting)
 
 ## Screenshots
 
@@ -67,5 +67,4 @@ Application code is in `src/crossflow_simulator/`; sample projects in `examples/
 Packaged builds include GPL-3.0 upstream code and must follow its licence requirements.
 
 - [Architecture and code walkthrough](docs/architecture.md)
-- [Validation, performance, and limitations](docs/validation_and_performance.md)
 - [CLI options](src/crossflow_simulator/cli.py) (`crossflow --help`)

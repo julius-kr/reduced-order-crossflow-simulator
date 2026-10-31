@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the implementation as built. Paths are relative to the repository root.
+This document describes the implementation. Paths are relative to the repository root.
 
 ## Pipeline
 
@@ -136,7 +136,7 @@ verified envelope", "numerical quality below target", "outside verified envelope
 (`calibration.py`).
 
 **CFD reference (`cfd.py`, `solvers/convection.py`).** The ground truth for the reduced-order
-solver. It removes the new solver's modelling assumptions:
+solver. It removes the new solver's modelling assumptions. Based on [OpenFOAM/OpenFOAM-13](https://github.com/OpenFOAM/OpenFOAM-13).
 * feature groups with developed flow at their margins, one domain each;
 * inertia neglected;
 * the map lattice and map composition;
@@ -194,8 +194,7 @@ reference, not an independent code, and its model card says so. CFD from another
 as `crossflow-reference/1`, remains the independent check.
 
 **Legacy CFD (`legacy_cfd.py`, `3D-hydrodynamic-flow-sculpting/`).** The repository root holds
-a byte-exact copy of [yiyingzou/3D-hydrodynamic-flow-sculpting](https://github.com/yiyingzou/3D-hydrodynamic-flow-sculpting)
-at revision `b6912d3` (GPL-3.0, see its `LICENSE`). `legacy_cfd.UPSTREAM_FILES` pins the SHA-256
+a byte-exact copy of [yiyingzou/3D-hydrodynamic-flow-sculpting](https://github.com/yiyingzou/3D-hydrodynamic-flow-sculpting). `legacy_cfd.UPSTREAM_FILES` pins the SHA-256
 of all 16 files, and `.gitattributes` keeps git from converting their line endings. The tool
 predicts sections by chaining index maps that its authors built from COMSOL streamline exports,
 one map per geometry, on a 250 x 250 section grid. The map libraries (pillar 214 MB, inlet 135
@@ -207,14 +206,12 @@ needs no library. The published pillar library holds 900 maps, all for `cw = ch 
 at random are bit-for-bit what upstream's `library_generation_pillar.py` builds from the raw
 streamlines.
 
-`build_plan` translates a project, or says why it cannot:
-
 * **Pillars.** Lengths scale by `W / 1.5` (library channel 1.5 x 1.5). A triangle whose base edge
   lies across the channel gives the parameters `cw, ch, ph, ya, yb, xc, yc`. Its library key is
   the entry of the parameter tree (`library_pillar_dict.npy`) within 0.01 library units (0.67% of
   W). If no entry is that close, the reason names the nearest entry and the difference in um.
 * **Symmetries.** The library pillars stand against `z = ch`, so they are top-mounted in this
-  project's frame. This is measured, not assumed: in the raw streamlines of a pillar a quarter of
+  project's frame. In the raw streamlines of a pillar a quarter of
   the height tall, the displacement behind its base is about 5x larger next to `z = ch` than next
   to `z = 0`. On a pillar of three quarters of the height, this reading agrees with the CFD
   reference at IoU 0.90, against 0.71 for the opposite one. A bottom-mounted pillar uses the
@@ -236,11 +233,6 @@ streamlines.
   * viscosity contrasts;
   * composite pillars;
   * non-triangular footprints.
-
-The library files are pickled NumPy dictionaries. `legacy_cfd_worker.load_library_file` reads the
-`.npy` header itself and unpickles with a restricted unpickler. It resolves only NumPy array and
-scalar reconstruction, and any other global is refused, so a manipulated library cannot run code.
-This applies to both `.npy` and `.npy.gz`.
 
 ## Caching and invalidation (`cache.py`)
 
@@ -332,77 +324,20 @@ and the accuracy record.
 
 ## GUI (`gui/`)
 
-One window, no tabs. The left column holds the setup and a horizontal bar chart comparing
-measured solve times for the new solver and selected legacy/CFD reference solvers. Legacy CFD
-is excluded because its original precomputation time is unavailable. The chart replaces
-the operation sequence panel; features remain editable in setup and the geometry editor.
-Unrun or unsupported solvers show a state rather than a zero runtime, and old-input results
-are marked stale. CFD bars use the original compute time when loading a cached result.
-The right side shows the geometry editor and animated 3D
-flow view above the solver results.
-
-The menu bar contains only File and Edit. The toolbar holds examples, Run (F5), Cancel (Esc),
-auto-update, Accuracy, and the three comparison toggles. Accuracy selects the new solver's flow
-resolution: Low = `preview` (12 cells across the smaller channel dimension), Medium = `medium`
-(18), High = `reference` (20). It is saved with the project and participates in result staleness.
-
-The visible solver panes share a horizontal row. Their plotted cross-section rectangles have
-identical pixel dimensions and aligned z=0 lines, recalculated after toggling comparisons.
-Pane dividers are locked. The main window can resize or maximize, and F11 toggles fullscreen,
-returning to the prior normal or maximized state. There are no
-per-solver diagnostic trees or Matplotlib navigation icon toolbars. Each pane retains its run
-status and output plot, with a bottom-left Export button for its native result, project snapshot, sections
-figure, and diagnostics. The new solver also exports the 3D view. Detailed numerical records
-remain in the result files and exports.
-
-The new solver has two difference checkboxes side by side above its plot.
-The Materials and Interfaces controls are removed; interfaces remain visible.
-The station slider is in the top-right 3D preview, with the selected section name and x position.
-Dragging it updates the visible 3D slice, New solver section, matching CFD sections, overlays,
-and agreement metrics without recalculating. It defaults to the final section after a run and
-is disabled before results are available or while those results are stale.
-Intermediate sections remain in the result data and exports.
-Successful current results display their run message in green; stale
-results display it in red. The CFD pane retains its grid choice, Run CFD, Recompute, estimate,
-and progress. Recompute deletes this case's stored result and fields before computing anew.
-
-Below the plots, the performance and agreement tables remain, together with the benchmark,
-reference chooser, and comparison export. The detailed bottom summary text is removed.
-Solve time shows actual computation duration; the CFD's saved computation time is retained on
-cache loads. End-to-end backend time likewise retains the original CFD submission-to-result-load
-measurement, persisted with the cached result. Older cache entries without this measurement
-show it as unavailable until recomputed. The legacy CFD's Solve time shows an em dash for all
-cases: map application measures a different operation, and the original CFD solve time cannot
-be reconstructed. Estimated upstream COMSOL costs remain in its exported result metadata.
-
-"Compare new with" chooses the CFD used to assess the new solver, or turns that assessment off.
-The difference overlays follow the same section selection; native legacy grids are regridded
-only for display and metrics. Run computes the new solver and enabled comparisons. Auto-update
-runs only the new solver, and comparison results become STALE after edits to their inputs.
-
-The 3D view shows the channel, extruded pillars, port openings, selected sections, streamlines,
-and particles moving along computed pathlines at relative physical speed.
-A selector can show the CFD flow while its comparison is on.
-Particles are blitted over a cached background. Geometry follows edits immediately; stale flow
-is hidden.
-The 3D scene is fitted using projected channel corners and label bounds after drawing, including
-resize and camera changes. Collections do not clip against the internal square Axes3D patch,
-which would otherwise cut off the outlet corner in a wide preview.
-
-`ProjectState` owns configuration, validation, undo/redo, and autosave recovery. The setup
-converts display units and highlights invalid inputs. Solvers run in isolated workers rather
-than on the Qt event loop. Auto-update submits after 0.7 seconds without an edit, and job IDs
-ensure an older result never replaces a newer one.
+- **Layout:** One window, no tabs. Left: settings and solver speed comparison. Right: geometry editor, animated 3D view, and results.
+- **Toolbar:** Run, Cancel, Auto-update, Accuracy, examples, and comparison options.
+- **Accuracy:** Low (12 cells), Medium (18), High (20) across the smaller channel dimension.
+- **Results:** Solver outputs displayed side by side, with aligned cross-sections and export options.
+- **Station slider:** Shows fluid distribution at different channel positions without recalculating.
+- **Status:** Green = current result, red = outdated result. Unavailable simulations are clearly marked.
+- **CFD controls:** Select grid, run, recompute, and monitor progress.
+- **Comparisons:** Compare accuracy and computation speed between solvers. Cached CFD results retain their original computation times.
+- **3D visualization:** Shows channel, pillars, ports, streamlines, and moving fluid particles.
+- **Auto-update:** Recalculates the new solver 0.7 seconds after changes; comparison results become outdated.
+- **Other features:** Undo/redo, autosave, unit conversion, fullscreen, and background calculations.
 
 ## Packaging (`packaging/`)
 
-`crossflow.spec` builds `crossflow-gui.exe` (windowed) and `crossflow.exe` (console; CLI and
-workers) in one bundle. `crossflow_app.py` dispatches worker invocations *before* importing the new
-package, and it runs the bundled legacy and legacy CFD worker scripts with `runpy`. The bundle
-includes `legacy/`, `examples/`, the vendored `3D-hydrodynamic-flow-sculpting/` code (with the
-compressed pillar map library and its index when they are installed in the source tree, 87 MB; the
-inlet and outlet libraries and raw streamlines stay out, and libraries are also looked up next to
-the executables), and
-`workers/legacy_worker.py` and `workers/legacy_cfd_worker.py`. Shipping the bundle distributes
-GPL-3.0 code: the upstream licence and source must go with it. Numba caches compiled kernels in
-`%LOCALAPPDATA%\crossflow_simulator\numba_cache`.
+Executables: crossflow.spec builds crossflow-gui.exe (GUI) and crossflow.exe (CLI and workers).
+
+Worker startup: crossflow_app.py starts legacy and CFD workers separately before importing the new solver.
