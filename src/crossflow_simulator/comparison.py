@@ -85,6 +85,7 @@ class ComparisonResult:
     accuracy: dict = field(default_factory=dict)  # per backend: agreement with the CFD reference
     accuracy_vs_legacy_cfd: dict = field(default_factory=dict)  # the new solver against the legacy CFD
     created: float = field(default_factory=time.time)
+    benchmark_runs: dict[str, list[BackendRun]] = field(default_factory=dict)
 
     def is_current(self, cfg: ProjectConfig) -> bool:
         return self.input_hash == cfg.input_hash() and all(
@@ -103,6 +104,8 @@ class ComparisonResult:
             "speedup": self.speedup,
             "alignment": self.alignment,
             "benchmark": self.benchmark,
+            "uncached_benchmark_runs": {name: [run.summary() for run in runs]
+                                        for name, runs in self.benchmark_runs.items()},
             "accuracy_vs_cfd": self.accuracy,
             "accuracy_vs_legacy_cfd": self.accuracy_vs_legacy_cfd,
             "interpretation": "Agreement with legacy is behavioural, not physical validation. Accuracy is measured "
@@ -164,8 +167,12 @@ class ComparisonService:
 
     # ------------------------------------------------------------------ single backend run
     def run_backend(self, name: str, cfg: ProjectConfig, comparison_id: str, timeout: float | None = None,
-                    clear_cache: bool = False, recompute: bool = False) -> BackendRun:
-        """Run one backend in its worker. ``recompute`` (CFD only) discards the stored CFD result first."""
+                    clear_cache: bool = False, recompute: bool = False, publish_result: bool = True) -> BackendRun:
+        """Run one backend in its worker. ``recompute`` (CFD only) discards the stored CFD result first.
+
+        Auxiliary timing trials can disable ``publish_result`` to keep their result from replacing
+        the computation shown by subscribers. Progress notifications are still emitted.
+        """
         backend = self.backends[name]
         try:
             unsupported = backend.check(cfg)
@@ -176,7 +183,8 @@ class ComparisonService:
             label = "legacy" if name == "legacy" else backend.label
             run = BackendRun(name, "unsupported", f"Not supported by {label}: " + "; ".join(unsupported),
                              effective_settings=effective, unsupported=unsupported)
-            self._notify("run", {"backend": name, "comparison_id": comparison_id, "status": run.status, "run": run})
+            if publish_result:
+                self._notify("run", {"backend": name, "comparison_id": comparison_id, "status": run.status, "run": run})
             return run
         started_before = name in self.clients and self.clients[name].alive
         try:
@@ -223,8 +231,9 @@ class ComparisonService:
             startup_seconds=None if started_before else self._startup.get(name),
             cache_state=cache_state, memory=message.get("memory", {}), effective_settings=effective, result=result,
         )
-        self._notify("run", {"backend": name, "comparison_id": comparison_id, "status": run.status,
-                             "job_id": job_id, "run": run})
+        if publish_result:
+            self._notify("run", {"backend": name, "comparison_id": comparison_id, "status": run.status,
+                                 "job_id": job_id, "run": run})
         return run
 
     # ------------------------------------------------------------------ paired run
@@ -268,6 +277,7 @@ class ComparisonService:
         unsupported = self.backends["legacy"].check(cfg)
         names = ["new"] if unsupported else ["new", "legacy"]
         runs: dict[str, BackendRun] = {}
+        trial_runs: dict[str, list[BackendRun]] = {name: [] for name in names}
         if include_cold:
             for name in names:
                 self.restart(name)
@@ -281,10 +291,12 @@ class ComparisonService:
             for name in order:
                 run = self.run_backend(name, cfg, comparison_id, timeout_legacy, clear_cache=True)
                 runs[name] = run
+                trial_runs[name].append(run)
                 if run.status == "success" and run.solve_seconds is not None:
                     samples[name]["warm_uncached"].append(run.solve_seconds)
         for trial in range(trials):
-            run = self.run_backend("new", cfg, comparison_id, None, clear_cache=False)
+            # Cache-reuse trials belong in their own statistics, not in the displayed solve result.
+            run = self.run_backend("new", cfg, comparison_id, None, clear_cache=False, publish_result=False)
             if run.status == "success" and run.solve_seconds is not None:
                 samples["new"]["cached"].append(run.solve_seconds)
         if unsupported:
@@ -296,6 +308,7 @@ class ComparisonService:
                  for name, scopes in samples.items()}
         comparison.speedup = speedup(runs.get("legacy"), runs.get("new"), stats)
         comparison.benchmark = {"protocol": protocol, "cold": cold, "statistics": stats, "samples": samples}
+        comparison.benchmark_runs = trial_runs
         return comparison
 
 
@@ -431,8 +444,49 @@ def accuracy_against(reference: SimulationResult, result: SimulationResult, stat
 def describe(values: list[float]) -> dict[str, float]:
     ordered = sorted(values)
     q = np.percentile(ordered, [25, 75]) if len(ordered) > 1 else [ordered[0], ordered[0]]
-    return {"n": len(ordered), "median": statistics.median(ordered), "min": ordered[0], "max": ordered[-1],
+    return {"n": len(ordered), "mean": statistics.fmean(ordered),
+            "median": statistics.median(ordered), "min": ordered[0], "max": ordered[-1],
             "iqr": float(q[1] - q[0])}
+
+
+def mean_accuracy(entries: list[dict]) -> dict:
+    """Summarize per-stream agreement over successful uncached trials, keeping their spread.
+
+    A passing mean must not hide a trial outside the acceptance targets. Missing/non-finite
+    measurements remain unavailable rather than being counted as passing measurements.
+    """
+    if not entries:
+        return {"available": False, "reason": "no successful uncached trial pairs"}
+    summary = dict(entries[0])
+    per_stream, spread = {}, {}
+    codes = set().union(*(entry["per_stream"] for entry in entries))
+    for code in sorted(codes):
+        streams = [entry["per_stream"].get(code, {}) for entry in entries]
+        keys = set().union(*streams)
+        spread[code] = {}
+        per_stream[code] = {}
+        for key in keys:
+            values = [stream.get(key, float("nan")) for stream in streams]
+            finite = [value for value in values if np.isfinite(value)]
+            if finite:
+                spread[code][key] = describe(finite)
+            per_stream[code][key] = statistics.fmean(values)
+        per_stream[code]["within_targets"] = all(
+            stream.get("iou", float("nan")) >= entry["targets"]["iou_min"]
+            and stream.get("interface_shift_m", float("nan")) <= entry["targets"]["interface_shift_m"]
+            and abs(stream.get("flux_misassigned", float("nan"))) <= entry["targets"]["flux_misassigned_max"]
+            for entry, stream in zip(entries, streams)
+        )
+    summary["per_stream"] = per_stream
+    for key in ("min_iou", "max_interface_shift_m", "max_interface_shift_fraction_of_H",
+                "max_flux_misassigned", "differing_cell_fraction"):
+        summary[key] = statistics.fmean(entry[key] for entry in entries)
+    summary["within_targets"] = all(entry["within_targets"] for entry in entries)
+    summary["passed"] = {key: all(entry["passed"][key] for entry in entries) for key in summary["passed"]}
+    summary["within_cfd_uncertainty"] = all(entry["within_cfd_uncertainty"] for entry in entries)
+    summary["benchmark"] = {"scope": "warm_uncached", "aggregation": "mean", "n": len(entries),
+                            "per_stream_statistics": spread}
+    return summary
 
 
 def speedup(legacy: BackendRun | None, new: BackendRun | None, stats: dict | None = None) -> dict[str, Any]:

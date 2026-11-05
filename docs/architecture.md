@@ -294,8 +294,14 @@ All backends receive the same input. `ComparisonService.run_set` runs any subset
 runs first, so its result appears while the others are still running. Legacy CFD takes
 milliseconds, so it runs before the CFD reference. The legacy benchmark protocol alternates
 the order and reports cold (startup plus first solve), warm uncached, and cached scopes with
-medians and IQR. A legacy/new speedup is shown only for two successful runs with the same timing
-scope.
+means, medians and IQR. On completion, the performance table and runtime chart show arithmetic
+means of successful warm uncached trials. The agreement table averages the per-stream metrics
+from those trials against the selected reference; legacy/new comparisons pair the same trial
+indices. Counts and ranges are shown in labels and tooltips. Cold-start and cached trials are
+excluded, and an acceptance verdict checks every trial rather than just the mean. A later manual
+run returns the tables to single-run values. Exports retain the uncached trial summaries and
+aggregated agreement. The legacy/new speedup uses the uncached medians and is shown only for two
+successful runs with the same timing scope.
 
 * **Legacy against new.** Metrics are per-stream IoU, interface distance, flux fractions, and
   centroid shift. They use legacy labels regridded by nearest neighbour onto the new grid, and the

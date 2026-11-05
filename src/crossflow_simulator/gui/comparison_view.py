@@ -14,6 +14,7 @@ view: a comparison run hands its new-solver result over through ``new_run``, and
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +22,7 @@ import numpy as np
 from .. import cfd, legacy_cfd, metrics
 from ..comparison import (
     BackendRun, ComparisonResult, accuracy_against, build_comparison, cfd_compute_seconds,
-    backend_end_to_end_seconds, export_comparison, speed_against_cfd,
+    backend_end_to_end_seconds, describe, export_comparison, mean_accuracy, speed_against_cfd, speedup,
 )
 from ..config import ProjectConfig
 from ..materials import colors_for
@@ -360,6 +361,55 @@ class ComparisonController(QtCore.QObject):
                           cache_state="map reused" if result.diagnostics.get("map_reused") else "preview worker",
                           result=result)
 
+    def _benchmark_runs(self, name: str) -> list[BackendRun] | None:
+        """Only use a completed benchmark while its actual results are still displayed."""
+        comparison = self.legacy_comparison
+        if (self.busy or comparison is None or not comparison.benchmark_runs
+                or not comparison.is_current(self.state.config)
+                or self._new_run() is not comparison.runs.get("new")):
+            return None
+        run = self._new_run() if name == "new" else self.runs.get(name)
+        if run is not comparison.runs.get(name):
+            return None
+        return comparison.benchmark_runs.get(name)
+
+    def _display_run(self, name: str, run: BackendRun | None) -> BackendRun | None:
+        trials = self._benchmark_runs(name)
+        successful = [trial for trial in trials or [] if trial.status == "success"]
+        if run is None or not successful:
+            return run
+
+        def mean_time(key):
+            values = [getattr(trial, key) for trial in successful if getattr(trial, key) is not None]
+            return describe(values)["mean"] if values else None
+
+        cold = (self.legacy_comparison.benchmark or {}).get("cold", {}).get(name, {})
+        return replace(run, solve_seconds=mean_time("solve_seconds"),
+                       end_to_end_seconds=mean_time("end_to_end_seconds"),
+                       startup_seconds=cold.get("startup_seconds"),
+                       cache_state=f"uncached benchmark ({len(successful)}/{len(trials)} successful)")
+
+    def _agreement(self, reference_name: str, result_name: str, station: int | None = None) -> dict:
+        references = self._benchmark_runs(reference_name)
+        results = self._benchmark_runs(result_name)
+        reference = self._new_run() if reference_name == "new" else self.runs.get(reference_name)
+        result = self._new_run() if result_name == "new" else self.runs.get(result_name)
+        if references is None and results is None:
+            pairs = [(reference, result)]
+        elif references is None:
+            pairs = [(reference, trial) for trial in results]
+        elif results is None:
+            pairs = [(trial, result) for trial in references]
+        else:
+            pairs = zip(references, results)  # match the same trial, including failed attempts
+        entries = [accuracy_against(ref.result, run.result, station) for ref, run in pairs
+                   if ref is not None and run is not None and ref.status == run.status == "success"
+                   and ref.result is not None and run.result is not None
+                   and ref.result.ok and run.result.ok and ref.result.final is not None and run.result.final is not None]
+        if references is not None or results is not None:
+            return mean_accuracy(entries)
+        return entries[0] if entries else {"available": False}
+
     def _other_inputs(self, run: BackendRun | None) -> bool:
         """Whether a legacy or legacy CFD result belongs to other inputs (the new solver's accuracy is not one)."""
         if not (run and run.result):
@@ -526,6 +576,7 @@ class ComparisonController(QtCore.QObject):
         self.pane.set_status("Benchmark running (sequential, alternating order)...", "#555555")
         self.message.emit("Benchmark running...")
         self._set_busy(True)
+        self.redraw()
         self.runner.benchmark(cfg, self.trials.value())
 
     def cancel(self) -> None:
@@ -544,14 +595,26 @@ class ComparisonController(QtCore.QObject):
             runs["new"] = new
         if len(runs) < 2:
             return None
-        return build_comparison(self.state.config, runs, self.comparison.comparison_id if self.comparison else None)
+        comparison = build_comparison(self.state.config, runs, self.comparison.comparison_id if self.comparison else None)
+        if self._benchmark_runs("new") is not None:
+            benchmark = self.legacy_comparison
+            comparison.benchmark_runs = benchmark.benchmark_runs
+            comparison.benchmark = {**benchmark.benchmark, "agreement": self.accuracy(),
+                                    "legacy_vs_new": self._agreement("new", "legacy")}
+            for name in comparison.accuracy:
+                entry = self._agreement("cfd", name, None if name == "legacy" else self.station)
+                entry["speed"] = speed_against_cfd(self._display_run(name, runs[name]), runs["cfd"])
+                comparison.accuracy[name] = entry
+            if comparison.accuracy_vs_legacy_cfd:
+                comparison.accuracy_vs_legacy_cfd["new"] = self._agreement("legacy_cfd", "new", self.station)
+            comparison.speedup = speedup(runs.get("legacy"), new, benchmark.benchmark["statistics"])
+        return comparison
 
     def export(self) -> None:
         comparison = self.current_comparison()
         if comparison is None:
             QtWidgets.QMessageBox.information(self.strip, "Export", "Run a comparison first.")
             return
-        comparison.benchmark = self.legacy_comparison.benchmark if self.legacy_comparison else None
         directory = QtWidgets.QFileDialog.getExistingDirectory(self.strip, "Export comparison")
         if directory:
             out = export_comparison(comparison, Path(directory) / f"comparison_{comparison.comparison_id}",
@@ -645,9 +708,23 @@ class ComparisonController(QtCore.QObject):
         reference = self.runs.get("cfd")
         runs = {"legacy": self.runs.get("legacy"), "new": self._new_run(), "cfd": reference,
                 "legacy_cfd": self.runs.get("legacy_cfd")}
-        for col, (name, _) in enumerate(COLUMNS):
+        runs = {name: self._display_run(name, run) for name, run in runs.items()}
+        for col, (name, label) in enumerate(COLUMNS):
+            trials = self._benchmark_runs(name)
+            successful = [trial for trial in trials or [] if trial.status == "success"]
+            header = label + (f" (uncached mean, n={len(successful)})" if trials is not None else "")
+            self.performance.horizontalHeaderItem(col).setText(header)
             for row, value in enumerate(_performance_values(name, runs[name], reference)):
                 item = QtWidgets.QTableWidgetItem(value)
+                if trials is not None and row in (1, 2):
+                    key = "solve_seconds" if row == 1 else "end_to_end_seconds"
+                    values = [getattr(trial, key) for trial in successful if getattr(trial, key) is not None]
+                    if values:
+                        stats = describe(values)
+                        item.setToolTip(f"Uncached trials: n={stats['n']}; mean {_fmt_seconds(stats['mean'])}; "
+                                        f"median {_fmt_seconds(stats['median'])}; "
+                                        f"range {_fmt_seconds(stats['min'])} to {_fmt_seconds(stats['max'])}. "
+                                        "Cold-start and cached trials excluded.")
                 if name == "legacy_cfd" and row == 1:
                     item.setToolTip("Original CFD solve time unavailable: this solver applies precomputed maps.")
                 self.performance.setItem(row, col, item)
@@ -659,6 +736,8 @@ class ComparisonController(QtCore.QObject):
             if name != "new" and not self.enabled[name]:
                 continue
             run = runs[name]
+            if self._benchmark_runs(name) is not None:
+                label += " (mean)"
             seconds = None
             status = "not run" if run is None else run.status
             if run is not None and run.status == "success":
@@ -679,17 +758,17 @@ class ComparisonController(QtCore.QObject):
         chosen = self.runs.get(choice) if choice else None
         if (chosen is not None and chosen.result is not None and chosen.result.ok and new is not None and new.ok
                 and new.sections):
-            out["new"] = {**accuracy_against(chosen.result, new, self.station), "reference": choice}
+            out["new"] = {**self._agreement(choice, "new", self.station), "reference": choice}
         reference = self.runs.get("cfd")
         if not self.enabled["cfd"] or reference is None or reference.result is None or not reference.result.ok:
             return out
         legacy = self.runs.get("legacy")
         if legacy is not None and legacy.result is not None and legacy.result.ok and legacy.result.final is not None:
-            out["legacy"] = accuracy_against(reference.result, legacy.result)
+            out["legacy"] = self._agreement("cfd", "legacy")
         mapped = self.runs.get("legacy_cfd")
         if (self.enabled["legacy_cfd"] and mapped is not None and mapped.result is not None and mapped.result.ok
                 and mapped.result.final is not None):
-            out["legacy_cfd"] = accuracy_against(reference.result, mapped.result, self.station)
+            out["legacy_cfd"] = self._agreement("cfd", "legacy_cfd", self.station)
         return out
 
     def fill_metrics(self) -> None:
@@ -697,52 +776,68 @@ class ComparisonController(QtCore.QObject):
         cfg = self.state.config
         unit = cfg.display.length_unit
         H = cfg.channel.height
-        rows = []
+        comparisons = []
         accuracy = self._accuracy
         new_reference = accuracy.get("new", {}).get("reference")
         for name, label in (("new", f"New vs {REFERENCES.get(new_reference, 'CFD')}"), ("legacy", "Legacy vs CFD"),
                             ("legacy_cfd", "Legacy CFD vs CFD")):
             entry = accuracy.get(name)
-            if entry is None or (name != "new" and not self.enabled[name]):
+            if entry is None or not entry.get("available") or (name != "new" and not self.enabled[name]):
                 continue
             stale = self._legacy_cfd_stale() if entry.get("reference") == "legacy_cfd" else self._cfd_stale()
-            target = entry["targets"]
-            for code, m in entry["per_stream"].items():
-                ok = (m["iou"] >= target["iou_min"] and not (m["interface_shift_m"] > target["interface_shift_m"])
-                      and abs(m["flux_misassigned"]) <= target["flux_misassigned_max"])
-                shift = m["interface_shift_m"]
-                within = entry["cfd_uncertainty_m"] > 0 and np.isfinite(shift) and shift <= entry["cfd_uncertainty_m"]
-                verdict = ("within CFD uncertainty" if within else "within target") if ok else "outside target"
-                if stale:
-                    verdict = "STALE: " + verdict
-                rows.append((label, code, m["iou"], shift, m["flux_misassigned"], m["centroid_displacement_m"],
-                             verdict, (WARN if stale else GOOD if ok else BAD)))
+            comparisons.append((label, entry, stale, False))
         legacy = self.runs.get("legacy")
         new = self.new_result
         if (self.enabled["legacy"] and legacy is not None and legacy.result is not None and legacy.result.ok
                 and new is not None and new.ok and new.final is not None):
-            entry = accuracy_against(new, legacy.result)
-            for code, m in entry["per_stream"].items():
-                rows.append(("Legacy vs New", code, m["iou"], m["interface_shift_m"], m["flux_misassigned"],
-                             m["centroid_displacement_m"], "behavioural only", "#555555"))
+            entry = self._agreement("new", "legacy")
+            comparisons.append(("Legacy vs New", entry, self._new_stale() or self._legacy_stale(), True))
         mapped = self.runs.get("legacy_cfd")
         if (self.enabled["legacy_cfd"] and mapped is not None and mapped.result is not None and mapped.result.ok
                 and new is not None and new.ok and new.final is not None and new_reference != "legacy_cfd"):
-            entry = accuracy_against(new, mapped.result, self.station)
+            entry = self._agreement("new", "legacy_cfd", self.station)
+            comparisons.append(("Legacy CFD vs New", entry, self._new_stale() or self._legacy_cfd_stale(), True))
+        for label, entry, stale, behavioural in comparisons:
+            if not entry.get("available"):
+                continue
+            aggregate = entry.get("benchmark")
+            if aggregate:
+                label += f" (uncached mean, n={aggregate['n']})"
+            target = entry["targets"]
             for code, m in entry["per_stream"].items():
-                rows.append(("Legacy CFD vs New", code, m["iou"], m["interface_shift_m"], m["flux_misassigned"],
-                             m["centroid_displacement_m"], "behavioural only", "#555555"))
-        for label, code, iou, shift, flux, centroid, verdict, color in rows:
-            row = self.metrics.rowCount()
-            self.metrics.insertRow(row)
-            shift_text = _fmt_length(shift, unit) + (f" ({100 * shift / H:.2g}% H)" if np.isfinite(shift) else "")
-            values = [label, str(code), f"{iou:.3f}", shift_text, f"{100 * flux:+.2f} pp", _fmt_length(centroid, unit),
-                      verdict]
-            for col, value in enumerate(values):
-                item = QtWidgets.QTableWidgetItem(value)
-                if col == 6:
-                    item.setForeground(QtGui.QColor(color))
-                self.metrics.setItem(row, col, item)
+                shift = m["interface_shift_m"]
+                ok = m.get("within_targets", (m["iou"] >= target["iou_min"]
+                           and shift <= target["interface_shift_m"]
+                           and abs(m["flux_misassigned"]) <= target["flux_misassigned_max"]))
+                within = entry["cfd_uncertainty_m"] > 0 and shift <= entry["cfd_uncertainty_m"]
+                if aggregate:
+                    within = within and entry["within_cfd_uncertainty"]
+                verdict = ("within CFD uncertainty" if within else "within target") if ok else "outside target"
+                color = GOOD if ok else BAD
+                if aggregate and not ok:
+                    verdict = "outside target in trial(s)"
+                if behavioural:
+                    verdict, color = "behavioural only", "#555555"
+                if stale:
+                    verdict, color = "STALE: " + verdict, WARN
+                row = self.metrics.rowCount()
+                self.metrics.insertRow(row)
+                shift_text = _fmt_length(shift, unit) + (f" ({100 * shift / H:.2g}% H)" if np.isfinite(shift) else "")
+                values = [label, str(code), f"{m['iou']:.3f}", shift_text, f"{100 * m['flux_misassigned']:+.2f} pp",
+                          _fmt_length(m["centroid_displacement_m"], unit), verdict]
+                for col, value in enumerate(values):
+                    item = QtWidgets.QTableWidgetItem(value)
+                    if aggregate:
+                        tooltip = f"Arithmetic mean over {aggregate['n']} successful uncached trial pairs. "
+                        key = {2: "iou", 3: "interface_shift_m", 4: "flux_misassigned",
+                               5: "centroid_displacement_m"}.get(col)
+                        stats = aggregate["per_stream_statistics"][code].get(key)
+                        if stats:
+                            tooltip += f"Range: {stats['min']:.6g} to {stats['max']:.6g} (SI units). "
+                        item.setToolTip(tooltip + "Cold-start and cached trials excluded; verdict checks every trial.")
+                    if col == 6:
+                        item.setForeground(QtGui.QColor(color))
+                    self.metrics.setItem(row, col, item)
 
 
     def _apply_difference(self) -> None:

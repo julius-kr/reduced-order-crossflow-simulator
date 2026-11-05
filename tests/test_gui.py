@@ -223,6 +223,108 @@ def test_cached_cfd_performance_shows_computation_timings(app, window, monkeypat
     assert values[1:3] == ["87.50 s", "88.25 s"]
 
 
+def test_benchmark_keeps_uncached_result_in_runtime_display(app, window, examples_dir, tmp_path):
+    from crossflow_simulator.comparison import ComparisonService
+    from crossflow_simulator.gui.comparison_view import _fmt_seconds
+
+    cfg = ProjectConfig.load(examples_dir / "serial_three_inlets.json")
+    window.state.replace(cfg.copy())
+    controller = window.comparison
+    published = []
+    controller.new_run.connect(published.append)
+    service = ComparisonService(tmp_path / "benchmark", on_update=controller._update)
+    try:
+        comparison = service.benchmark(cfg, trials=3, include_cold=False)
+    finally:
+        service.close()
+    controller._done(comparison)
+
+    measured = comparison.runs["new"]
+    assert measured.status == "success", measured.message
+    assert comparison.benchmark["statistics"]["new"]["cached"]["n"] == 3
+    assert len(published) == 3
+    assert window.last_result is measured.result
+    assert controller._new_run() is measured
+    mean = np.mean(comparison.benchmark["samples"]["new"]["warm_uncached"])
+    assert controller.performance.item(1, 1).text() == _fmt_seconds(mean)
+    assert next(row[2] for row in controller.runtime_chart.records if row[0] == "new") == pytest.approx(mean)
+    assert "uncached mean, n=3" in controller.performance.horizontalHeaderItem(1).text()
+
+
+@pytest.mark.parametrize("failed_middle", [False, True])
+def test_benchmark_tables_summarize_all_uncached_trials(app, window, failed_middle):
+    import json
+    from dataclasses import replace
+
+    from crossflow_simulator.comparison import BackendRun, accuracy_against, build_comparison, describe
+    from crossflow_simulator.simulator import simulate
+
+    controller = window.comparison
+    window.compare.setChecked(True)
+    window.compare_cfd.setChecked(True)
+    base = simulate(window.state.config)
+    assert base.ok
+    runs = {"new": [], "legacy": []}
+    for name, times in (("new", (0.2, 0.4, 0.9)), ("legacy", (1.0, 2.0, 6.0))):
+        for index, seconds in enumerate(times):
+            codes = base.final.codes.copy()
+            # Distinct trial results make averaging metrics distinguishable from using the last result.
+            codes[:, : (index + 1) * (2 if name == "new" else 3)] = 2
+            result = replace(base, backend=name,
+                             sections=[*base.sections[:-1], replace(base.final, codes=codes)])
+            runs[name].append(BackendRun(name, "success", solve_seconds=seconds,
+                                        end_to_end_seconds=seconds + (index + 1) * 0.1,
+                                        cache_state="cleared", result=result))
+    if failed_middle:
+        runs["legacy"][1] = BackendRun("legacy", "failed", solve_seconds=0.001)
+    comparison = build_comparison(window.state.config, {name: trials[-1] for name, trials in runs.items()})
+    comparison.benchmark_runs = runs
+    comparison.benchmark = {
+        "protocol": {"trials": 3}, "cold": {},
+        "statistics": {name: {"warm_uncached": describe([run.solve_seconds for run in trials
+                                                        if run.status == "success"])}
+                       for name, trials in runs.items()},
+        "samples": {"new": {"cached": [0.001, 0.002, 0.003]}},
+    }
+    controller.runs["cfd"] = BackendRun("cfd", "success", solve_seconds=10.0,
+                                        result=replace(base, backend="cfd"))
+    window.show_result(runs["new"][-1].result)
+    controller._done(comparison)
+    assert controller.performance.item(1, 1).text() == "500 ms"
+    assert controller.performance.item(2, 1).text() == "700 ms"
+    assert "median 400 ms" in controller.performance.item(1, 1).toolTip()
+    expected_legacy_time = 3.5 if failed_middle else 3.0
+    assert controller.performance.item(1, 0).text() == f"{expected_legacy_time:.2f} s"
+    assert next(row[2] for row in controller.runtime_chart.records if row[0] == "new") == pytest.approx(0.5)
+    for label, reference_name, result_name in (("New vs CFD", "cfd", "new"),
+                                                ("Legacy vs CFD", "cfd", "legacy"),
+                                                ("Legacy vs New", "new", "legacy")):
+        pairs = ([(controller.runs["cfd"], trial) for trial in runs[result_name]] if reference_name == "cfd"
+                 else list(zip(runs[reference_name], runs[result_name])))
+        entries = [accuracy_against(ref.result, run.result) for ref, run in pairs
+                   if ref.status == run.status == "success"]
+        expected_count = len(entries)
+        rows = [r for r in range(controller.metrics.rowCount())
+                if controller.metrics.item(r, 0).text() == f"{label} (uncached mean, n={expected_count})"]
+        assert len(rows) == len(entries[0]["per_stream"])
+        for row in rows:
+            code = int(controller.metrics.item(row, 1).text())
+            expected = np.mean([entry["per_stream"][code]["iou"] for entry in entries])
+            assert controller.metrics.item(row, 2).text() == f"{expected:.3f}"
+            assert "Range:" in controller.metrics.item(row, 2).toolTip()
+    exported = controller.current_comparison()
+    summary = json.loads(json.dumps(exported.summary()))
+    assert summary["benchmark"]["agreement"]["new"]["benchmark"]["n"] == 3
+    assert len(summary["uncached_benchmark_runs"]["new"]) == 3
+    assert summary["speedup"]["scope"] == "median warm-worker uncached solve time"
+    # A later manual result at the same inputs must return both tables to single-run mode.
+    window.show_result(replace(base, timings={"total": 0.123}))
+    assert controller.performance.horizontalHeaderItem(1).text() == "New"
+    assert controller.performance.item(1, 1).text() == "123 ms"
+    assert all("uncached mean" not in controller.metrics.item(r, 0).text()
+               for r in range(controller.metrics.rowCount()))
+
+
 def test_runtime_chart_tracks_selected_solvers_and_original_cfd_compute_time(app, window):
     from dataclasses import replace
 

@@ -162,7 +162,9 @@ def test_timeout_cancels_and_restarts_the_worker(service):
     assert service.run_backend("legacy", quick, "after", timeout=120).status == "success"
 
 
-def test_benchmark_protocol(service):
+def test_benchmark_protocol(service, monkeypatch):
+    updates = []
+    monkeypatch.setattr(service, "on_update", lambda kind, data: updates.append((kind, data)))
     cfg = ProjectConfig.load(ROOT / "examples" / "parallel_unequal.json")
     comparison = service.benchmark(cfg, trials=2, include_cold=True)
     stats = comparison.benchmark["statistics"]
@@ -170,3 +172,15 @@ def test_benchmark_protocol(service):
     assert stats["new"]["cached"]["n"] == 2
     assert comparison.speedup["scope"] == "median warm-worker uncached solve time"
     assert set(comparison.benchmark["cold"]) == {"new", "legacy"}
+    # The cold run and two uncached trials publish results; the two auxiliary cached
+    # trials must not replace the computation retained by the comparison or its UI.
+    new_runs = [data["run"] for kind, data in updates if kind == "run" and data["backend"] == "new"]
+    assert len(new_runs) == 3
+    assert new_runs[-1] is comparison.runs["new"]
+    assert all(run.cache_state == "cleared" for run in new_runs)
+    assert comparison.benchmark_runs["new"] == new_runs[1:]
+    for name in ("new", "legacy"):
+        trials = comparison.benchmark_runs[name]
+        assert len(trials) == 2
+        assert stats[name]["warm_uncached"]["mean"] == pytest.approx(np.mean([run.solve_seconds for run in trials]))
+    assert len(comparison.summary()["uncached_benchmark_runs"]["new"]) == 2
