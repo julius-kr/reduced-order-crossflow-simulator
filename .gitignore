@@ -14,13 +14,9 @@ dist/
 
 # Local outputs
 results/
-benchmarks/results/*.json
-!benchmarks/results/.gitkeep
-docs/review/benchmark_results_rerun.json
 *.autosave.json
 *.nbi
 *.nbc
-benchmarks/results/*.md
 
 # Map libraries and COMSOL exports of the vendored 3D-hydrodynamic-flow-sculpting tool
 # (hundreds of MB; downloaded separately, see 3D-hydrodynamic-flow-sculpting/README.md)

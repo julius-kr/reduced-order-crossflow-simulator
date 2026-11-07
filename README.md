@@ -57,7 +57,6 @@ numerical methods with the New solver and does not provide independent experimen
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe benchmarks/run_benchmarks.py --trials 3
 .\.venv\Scripts\pyinstaller.exe --noconfirm packaging/crossflow.spec
 .\.venv\Scripts\python.exe packaging/smoke_test.py dist/crossflow
 ```

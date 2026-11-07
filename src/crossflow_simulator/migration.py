@@ -1,9 +1,7 @@
 """Checks for the layout migration.
 
 After the legacy snapshot was verified, the original top-level ``python/``
-tree must disappear and nothing executable may still point at it. The
-recorded benchmark of the original solver (``docs/review/benchmark_results.json``)
-may mention the old path and is excluded explicitly.
+tree must disappear and nothing executable may still point at it.
 """
 from __future__ import annotations
 
@@ -15,7 +13,6 @@ _OLD = "python"
 PATTERN = re.compile(r"(?<!legacy/)(?<!legacy\\)(?<![\w.-])" + _OLD + r"[/\\](?:src|tests)\b")
 SCANNED_SUFFIXES = {".py", ".toml", ".cfg", ".ini", ".json", ".spec", ".bat", ".ps1", ".cmd", ".yml", ".yaml", ".txt"}
 EXCLUDED_DIRS = {".git", ".venv", "legacy", "build", "dist", "__pycache__", ".pytest_cache", "results"}
-HISTORICAL = {"docs/review/benchmark_results.json"}
 # Published data of the vendored legacy CFD tool (GBs of COMSOL streamline exports and map libraries), not code.
 DATA_PREFIXES = ("3D-hydrodynamic-flow-sculpting/streamline_files_", "3D-hydrodynamic-flow-sculpting/generated_library_")
 
@@ -28,7 +25,7 @@ def find_references(root: Path) -> list[dict]:
         relative = path.relative_to(root)
         if relative.parts and (relative.parts[0] in EXCLUDED_DIRS or relative.parts[0].startswith(".venv")):
             continue
-        if relative.as_posix() in HISTORICAL or relative.as_posix().startswith(DATA_PREFIXES):
+        if relative.as_posix().startswith(DATA_PREFIXES):
             continue
         try:
             text = path.read_text(encoding="utf-8")
